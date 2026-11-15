@@ -158,6 +158,11 @@ describe('HS256', () => {
     expect(await code(jwt.verify(undefined as unknown as string))).toBe('malformed');
     const crit = `${b64({ alg: 'HS256', crit: ['x'] })}.${b64({})}.AAAA`;
     expect(await code(jwt.verify(crit))).toBe('malformed');
+    // A valid header and payload with a signature that is not base64url.
+    const [header, payload] = (await jwt.sign({ sub: '1', role: 'admin' })).split('.');
+    for (const signature of ['!!!', 'abcde', 'a+b/', 'ab==']) {
+      expect(await code(jwt.verify(`${header}.${payload}.${signature}`))).toBe('malformed');
+    }
   });
 
   test('weak secrets are refused; rotation accepts previous secrets for verify only', async () => {

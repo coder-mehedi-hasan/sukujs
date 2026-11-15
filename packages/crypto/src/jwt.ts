@@ -342,7 +342,12 @@ export function createJwt<T = Record<string, unknown>>(options: JwtOptions<T>): 
       throw new JwtError('malformed', 'Token type is not JWT.');
     }
 
-    const signature = base64urlDecode(signaturePart);
+    let signature: Bytes;
+    try {
+      signature = base64urlDecode(signaturePart);
+    } catch (cause) {
+      throw new JwtError('malformed', 'Token signature is not valid base64url.', { cause });
+    }
     const data = toBytes(`${headerPart}.${payloadPart}`);
     let valid = false;
     for (const key of await getVerifyKeys()) {
