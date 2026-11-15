@@ -22,8 +22,19 @@ export interface CsrfTokenOptions extends CsrfCommon {
   mode: 'token';
   /** Signs the token cookie. At least 32 bytes. */
   secret: string;
-  /** Cookie that carries the token. Default `csrf`. */
+  /**
+   * Cookie that carries the token. Default `__Host-csrf`, or `csrf` when the cookie is not
+   * `Secure`, has a `domain`, or has a `path` other than `/`. The `__Host-` prefix makes
+   * browsers refuse a cookie of that name set by a sibling subdomain or over plain HTTP.
+   */
   cookieName?: string;
+  /**
+   * Ties the token to the caller's session, so a token issued to one session is rejected
+   * on another. Return the session id, or `undefined` for a visitor without a session.
+   * When the session changes (login, logout) the old token stops working and a new one is
+   * issued on the next request.
+   */
+  sessionId?: (ctx: RequestContext) => string | undefined;
   /** Header the client must echo the token in. Default `x-csrf-token`. */
   headerName?: string;
   /** Cookie attributes. Default: `Path=/; SameSite=Lax; Secure`. Never `HttpOnly`: scripts must read it. */
@@ -39,6 +50,8 @@ export type CsrfOptions = CsrfOriginOptions | CsrfTokenOptions;
 
 const TOKEN = Symbol.for('suku:csrf-token');
 const DEFAULT_SAFE = ['GET', 'HEAD', 'OPTIONS'];
+/** The random part of a token, as `randomToken` produces it. */
+const VALUE = /^[A-Za-z0-9_-]+$/;
 
 /** The CSRF token for this request (token mode), to embed in a form or page. */
 export function csrfToken(ctx: RequestContext): string | undefined {
@@ -104,25 +117,52 @@ export function csrf(options: CsrfOptions = {}): MiddlewareFn {
     throw new TypeError('csrf: token mode needs a `secret` of at least 32 characters.');
   }
   const signer = createSigner(options.secret);
-  const cookieName = options.cookieName ?? 'csrf';
   const headerName = options.headerName ?? 'x-csrf-token';
+  const sessionId = options.sessionId;
   const c = options.cookie ?? {};
+  const path = c.path ?? '/';
+  const secure = c.secure ?? true;
+  const hostOnly = secure && !c.domain && path === '/';
+  const cookieName = options.cookieName ?? (hostOnly ? '__Host-csrf' : 'csrf');
+  if (cookieName.startsWith('__Host-') && !hostOnly) {
+    throw new TypeError(
+      'csrf: a `__Host-` cookie must be Secure, have no `domain` and use `path: "/"`; browsers drop it otherwise.',
+    );
+  }
   const attributes =
-    `; Path=${c.path ?? '/'}; SameSite=${c.sameSite ?? 'Lax'}` +
-    ((c.secure ?? true) ? '; Secure' : '') +
+    `; Path=${path}; SameSite=${c.sameSite ?? 'Lax'}` +
+    (secure ? '; Secure' : '') +
     (c.domain ? `; Domain=${c.domain}` : '');
+
+  // What is signed: the random value alone, or the value and the session id. The value is
+  // base64url and so has no dot, which keeps the two forms from being mistaken for each other.
+  const signed = (value: string, session: string | undefined) =>
+    session === undefined ? value : `${value}.${session}`;
+  const issue = async (session: string | undefined) => {
+    const value = randomToken(18);
+    return `${value}.${await signer.sign(signed(value, session))}`;
+  };
+  const check = async (token: string | undefined, session: string | undefined) => {
+    if (token === undefined) return false;
+    const at = token.indexOf('.');
+    if (at === -1) return false;
+    const value = token.slice(0, at);
+    if (!VALUE.test(value)) return false;
+    return signer.verify(signed(value, session), token.slice(at + 1));
+  };
 
   return async (ctx, next) => {
     if (skip?.(ctx)) return next();
+    const session = sessionId?.(ctx);
     const presented = readCookie(ctx.headers.get('cookie'), cookieName);
-    const valid = presented !== undefined && (await signer.unpack(presented)) !== undefined;
+    const valid = await check(presented, session);
 
     if (!safe.has(ctx.method)) {
       const echoed = ctx.headers.get(headerName);
-      if (!valid || echoed === null || !timingSafeEqual(echoed, presented)) reject();
+      if (!valid || echoed === null || !timingSafeEqual(echoed, presented as string)) reject();
     }
 
-    const token = valid ? presented : await signer.pack(randomToken(18));
+    const token = valid ? (presented as string) : await issue(session);
     ctx.set(TOKEN, token);
     const response = await next();
     if (valid) return response;

@@ -65,11 +65,11 @@ every state-changing request must repeat it in a header.
 csrf({ mode: 'token', secret: env.CSRF_SECRET });
 ```
 
-The middleware sets a `csrf` cookie on the first response. Your front end reads it and sends
-it back:
+The middleware sets a `__Host-csrf` cookie on the first response. Your front end reads it and
+sends it back:
 
 ```ts
-const token = document.cookie.match(/(?:^|; )csrf=([^;]+)/)?.[1];
+const token = document.cookie.match(/(?:^|; )__Host-csrf=([^;]+)/)?.[1];
 
 await fetch('/api/orders', {
   method: 'POST',
@@ -87,12 +87,32 @@ route.get('/form', { handle: ({ ctx }) => renderForm({ csrf: csrfToken(ctx) }) }
 ```
 
 Another site can make the browser send the cookie, but it cannot read the cookie to copy it
-into a header. The signature stops a neighbouring subdomain from planting a cookie of its own.
+into a header. The signature stops anyone from inventing a token, and the `__Host-` prefix makes
+browsers refuse a cookie of that name set by a neighbouring subdomain.
+
+### Tie the token to the session
+
+A signed token is valid for whoever presents it. An attacker can fetch a token of their own
+and, if they can set cookies for your domain, give it to a victim. Pass `sessionId` and a
+token only works for the session it was issued to:
+
+```ts
+csrf({
+  mode: 'token',
+  secret: env.CSRF_SECRET,
+  sessionId: (ctx) => ctx.cookies.get('session'),
+});
+```
+
+Return `undefined` for a visitor with no session. When the session changes, at login or
+logout, the old token stops working and the next response sets a new one, so read the cookie
+again after signing in. Any middleware that `sessionId` depends on must run before `csrf`.
 
 | Option | Default | Meaning |
 | --- | --- | --- |
 | `secret` | required | Signs the token. At least 32 characters. |
-| `cookieName` | `csrf` | |
+| `cookieName` | `__Host-csrf` | `csrf` when the cookie is not `Secure`, has a `domain`, or a `path` other than `/`. |
+| `sessionId` | none | Returns the session id the token is tied to. |
 | `headerName` | `x-csrf-token` | |
 | `cookie` | `Path=/; SameSite=Lax; Secure` | The cookie is readable by scripts on purpose. |
 

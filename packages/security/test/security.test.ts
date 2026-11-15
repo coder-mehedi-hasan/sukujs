@@ -254,29 +254,102 @@ describe('csrf, token mode', () => {
     });
     const first = await app.handle(req('/token'));
     const cookie = first.headers.get('set-cookie') ?? '';
-    expect(cookie).toMatch(/^csrf=[A-Za-z0-9_.-]+; Path=\/; SameSite=Lax; Secure$/);
-    const token = cookie.slice(5, cookie.indexOf(';'));
+    expect(cookie).toMatch(/^__Host-csrf=[A-Za-z0-9_.-]+; Path=\/; SameSite=Lax; Secure$/);
+    const token = cookie.slice('__Host-csrf='.length, cookie.indexOf(';'));
     expect(((await first.json()) as { token: string }).token).toBe(token);
 
     const post = (headers: Record<string, string>) =>
       app.handle(req('/data', { method: 'POST', headers }));
-    expect((await post({ cookie: `csrf=${token}`, 'x-csrf-token': token })).status).toBe(201);
-    expect((await post({ cookie: `other=1; csrf=${token}`, 'x-csrf-token': token })).status).toBe(
+    expect((await post({ cookie: `__Host-csrf=${token}`, 'x-csrf-token': token })).status).toBe(
       201,
     );
-    expect((await post({ cookie: `csrf=${token}` })).status).toBe(403);
+    expect(
+      (await post({ cookie: `other=1; __Host-csrf=${token}`, 'x-csrf-token': token })).status,
+    ).toBe(201);
+    expect((await post({ cookie: `__Host-csrf=${token}` })).status).toBe(403);
     expect((await post({ 'x-csrf-token': token })).status).toBe(403);
-    expect((await post({ cookie: `csrf=${token}`, 'x-csrf-token': `${token}x` })).status).toBe(403);
+    expect(
+      (await post({ cookie: `__Host-csrf=${token}`, 'x-csrf-token': `${token}x` })).status,
+    ).toBe(403);
     // A cookie an attacker planted is not signed by us, even if the header matches it.
     expect(
-      (await post({ cookie: 'csrf=forged.value', 'x-csrf-token': 'forged.value' })).status,
+      (await post({ cookie: '__Host-csrf=forged.value', 'x-csrf-token': 'forged.value' })).status,
     ).toBe(403);
+    // The same token under the unprefixed name, which a sibling subdomain could set, is ignored.
+    expect((await post({ cookie: `csrf=${token}`, 'x-csrf-token': token })).status).toBe(403);
     // A valid cookie is not reissued.
     expect(
-      (await app.handle(req('/data', { headers: { cookie: `csrf=${token}` } }))).headers.get(
+      (await app.handle(req('/data', { headers: { cookie: `__Host-csrf=${token}` } }))).headers.get(
         'set-cookie',
       ),
     ).toBeNull();
+  });
+
+  test('the cookie is __Host- prefixed only when browsers would accept it', async () => {
+    const nameOf = async (options: Partial<Parameters<typeof csrf>[0] & object>) => {
+      const app = await Suku.create({
+        routes,
+        middlewares: [csrf({ mode: 'token', secret, ...options })],
+      });
+      return ((await app.handle(req('/data'))).headers.get('set-cookie') ?? '').split('=')[0];
+    };
+    expect(await nameOf({})).toBe('__Host-csrf');
+    expect(await nameOf({ cookie: { secure: false } })).toBe('csrf');
+    expect(await nameOf({ cookie: { domain: 'example.com' } })).toBe('csrf');
+    expect(await nameOf({ cookie: { path: '/app' } })).toBe('csrf');
+    expect(await nameOf({ cookieName: 'xsrf' })).toBe('xsrf');
+    expect(() =>
+      csrf({ mode: 'token', secret, cookieName: '__Host-x', cookie: { domain: 'example.com' } }),
+    ).toThrow(/__Host-/);
+  });
+
+  test('with sessionId, a token issued to one session is rejected on another', async () => {
+    const app = await Suku.create({
+      routes,
+      middlewares: [
+        csrf({
+          mode: 'token',
+          secret,
+          sessionId: (ctx) => ctx.headers.get('x-session') ?? undefined,
+        }),
+      ],
+    });
+    const tokenFor = async (session?: string) => {
+      const response = await app.handle(
+        req('/data', session ? { headers: { 'x-session': session } } : {}),
+      );
+      const cookie = response.headers.get('set-cookie') ?? '';
+      return cookie.slice('__Host-csrf='.length, cookie.indexOf(';'));
+    };
+    const post = (token: string, session?: string) =>
+      app.handle(
+        req('/data', {
+          method: 'POST',
+          headers: {
+            cookie: `__Host-csrf=${token}`,
+            'x-csrf-token': token,
+            ...(session ? { 'x-session': session } : {}),
+          },
+        }),
+      );
+    const alice = await tokenFor('alice');
+    const anonymous = await tokenFor();
+
+    expect((await post(alice, 'alice')).status).toBe(201);
+    expect((await post(anonymous)).status).toBe(201);
+    // An attacker's own token, planted in the victim's browser.
+    expect((await post(await tokenFor('mallory'), 'alice')).status).toBe(403);
+    expect((await post(anonymous, 'alice')).status).toBe(403);
+    expect((await post(alice)).status).toBe(403);
+    // A session-bound token cannot be reshaped into an anonymous one.
+    const [value, signature] = alice.split('.');
+    expect((await post(`${value}.alice.${signature}`)).status).toBe(403);
+
+    // After the session changes, the stale cookie is replaced on the next safe request.
+    const next = await app.handle(
+      req('/data', { headers: { cookie: `__Host-csrf=${anonymous}`, 'x-session': 'alice' } }),
+    );
+    expect(next.headers.get('set-cookie')).toStartWith('__Host-csrf=');
   });
 
   test('a short secret is refused at startup', () => {
