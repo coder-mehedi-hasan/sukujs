@@ -1,0 +1,425 @@
+---
+title: Coming from Express
+description: How Express habits map onto Suku's routes, middlewares and error handlers.
+icon: ArrowRightLeft
+---
+
+Suku will feel familiar: routes are a method and a path, and a middleware wraps what comes
+after it. The main change is direction. In Express you write to `res`. In Suku a handler
+returns a value and throws on failure, and the request is validated and typed by a schema
+before your code runs.
+
+## Concept map
+
+| Express | Suku |
+| --- | --- |
+| `express()` | `Suku.create({ ... })` |
+| `app.get('/users/:id', handler)` | `route.get('/users/:id', { handle })` |
+| `express.Router()` | [`route.group(prefix, options, routes)`](/docs/routes#groups), or a [`@Routes` class](/docs/routes) |
+| `app.use('/users', router)` | A [feature](/docs/features) with a `prefix`, listed in `features` |
+| `app.use(fn)` | `middlewares: [fn]` in `Suku.create`, or `app.use(fn)` |
+| `(req, res, next) => { ... }` | [`middleware((ctx, next) => { ... })`](/docs/middlewares) |
+| `(err, req, res, next) => { ... }` | [`onError: (error, ctx) => { ... }`](/docs/errors#error-handlers) |
+| `next(err)` | `throw err` |
+| `req.user = ...`, `res.locals` | `ctx.set('user', ...)`, `ctx.get('user')` |
+| `express.json()`, `express.urlencoded()` | Built in. Give the route a `body` schema, or call `ctx.body()` |
+| `cookie-parser` | Built in: `ctx.cookies` |
+| `multer` | Built in: a multipart body is a standard `FormData` |
+| `express-validator`, `joi`, `celebrate` | The route's `params`, `query`, `body` and `headers` [schemas](/docs/validation) |
+| `helmet`, `cors`, `express-rate-limit`, `csurf` | [`@sukujs/security`](/docs/security) |
+| `jsonwebtoken`, `bcrypt`, `cookie-signature` | [`@sukujs/crypto`](/docs/crypto) |
+| `morgan` | A middleware that uses the [`Logger`](/docs/logging) |
+| `require('./db')` in every file | [Services](/docs/dependency-injection), injected |
+| `dotenv` and `process.env` | [`defineConfig` and `Env.load()`](/docs/configuration) |
+| `supertest` | [`app.handle(new Request(...))`](/docs/testing) |
+| `express-generator` | [`suku new`](/docs/cli) |
+
+## An app, translated
+
+```ts
+// Express
+const app = express();
+app.use(express.json());
+
+app.get('/users/:id', async (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id)) return res.status(400).json({ message: 'Invalid id' });
+  const user = await users.find(id);
+  if (!user) return res.status(404).json({ message: 'User not found' });
+  res.json(user);
+});
+
+app.post('/users', requireAuth, async (req, res) => {
+  if (typeof req.body?.name !== 'string') return res.status(400).json({ message: 'Invalid name' });
+  res.status(201).json(await users.create(req.body));
+});
+
+app.listen(3000);
+```
+
+```ts
+// Suku
+const findUser = route.get('/users/:id', {
+  params: z.object({ id: z.coerce.number().int() }),
+  services: { users: UsersService },
+  handle: async ({ params, users }) => {
+    const user = await users.find(params.id);
+    if (!user) throw new NotFoundException('User not found');
+    return user;
+  },
+});
+
+const createUser = route.post('/users', {
+  body: z.object({ name: z.string().min(1) }),
+  middlewares: [requireAuth],
+  services: { users: UsersService },
+  handle: ({ body, users }) => users.create(body),
+});
+
+const app = await Suku.create({
+  routes: [findUser, createUser],
+  services: [UsersService],
+  adapter: nodeAdapter(),
+});
+await app.listen(3000);
+```
+
+Three things went away: the body parser, the hand-written checks, and `res`. An invalid `id`
+or body is answered with a `400` listing the issues before the handler runs.
+
+## The request
+
+Everything on `req` has a place in the object the handler receives.
+
+| Express | Suku |
+| --- | --- |
+| `req.params.id` | `params.id` |
+| `req.query.page` | `query.page` |
+| `req.body` | `body`, with a `body` schema. Otherwise `await ctx.body()` |
+| `req.get('authorization')`, `req.headers` | `headers.get('authorization')` |
+| `req.cookies.session` | `ctx.cookies.get('session')` |
+| `req.method` | `ctx.method` |
+| `req.path` | `ctx.url.pathname` |
+| `req.hostname` | `ctx.url.hostname` |
+| `req.originalUrl` | `request.url` |
+| `req.ip` | `ctx.remoteAddress`. Behind a proxy, the proxy's |
+| `req.file`, `req.files` | `(await ctx.body<FormData>()).get('file')` |
+| `req.route.path` | `ctx.route?.path` |
+| `req.on('close', ...)` | `request.signal.addEventListener('abort', ...)` |
+
+`request` is the Fetch `Request` and `headers` is a standard `Headers` object, so what you
+know from `fetch` in the browser applies. See [handlers](/docs/handlers) for each one in use.
+
+## The response
+
+There is no `res`. What the handler returns is the response.
+
+| Express | Suku |
+| --- | --- |
+| `res.json(data)` | `return data` |
+| `res.send('text')` | `return 'text'` |
+| `res.sendStatus(204)`, `res.end()` | Return nothing |
+| `res.status(202).json(data)` | `status: 202` on the route, then `return data` |
+| A status decided at runtime | `return Response.json(data, { status })` |
+| `res.status(404).json({ ... })` | `throw new NotFoundException('...')` |
+| `res.set('cache-control', 'no-store')` | `ctx.setHeader('cache-control', 'no-store')` |
+| `res.cookie('session', value)` | `ctx.cookies.set('session', value)` |
+| `res.clearCookie('session')` | `ctx.cookies.delete('session')` |
+| `res.redirect('/login')` | `return redirect('/login')` |
+| `res.redirect(301, '/new')` | `return redirect('/new', 301)` |
+| `res.download(...)`, `res.sendFile(...)` | Return a `Response` with a `content-disposition` header |
+| `stream.pipe(res)` | Return a `ReadableStream` |
+| `res.write(...)` for server-sent events | Return a `Response` whose body is a stream |
+
+```ts
+route.get('/reports/:id', {
+  handle: async ({ params, ctx }) => {
+    const report = await reports.find(params.id);
+    if (!report) throw new NotFoundException();
+    ctx.setHeader('cache-control', 'private, max-age=60');
+    return report;
+  },
+});
+```
+
+Because a handler can only return once, the Express bug of sending twice, or of forgetting
+`return` before `res.json(...)`, cannot happen.
+
+## Middleware
+
+A middleware takes the request context and `next`. `next()` returns a promise of the
+response, so code after it runs on the way out. Express has no direct equivalent: there you
+patch `res.end` or listen for `finish`.
+
+```ts
+// Express
+app.use((req, res, next) => {
+  const started = performance.now();
+  res.on('finish', () => console.log(`${req.method} ${req.path} ${performance.now() - started}ms`));
+  next();
+});
+```
+
+```ts
+// Suku
+const timing = middleware(async (ctx, next) => {
+  const started = performance.now();
+  const res = await next();
+  res.headers.set('server-timing', `app;dur=${(performance.now() - started).toFixed(1)}`);
+  return res;
+});
+```
+
+An authentication middleware translates line for line.
+
+```ts
+// Express
+async function requireAuth(req, res, next) {
+  const header = req.get('authorization');
+  if (!header) return res.status(401).json({ message: 'Unauthorized' });
+  req.user = await verifyToken(header);
+  next();
+}
+```
+
+```ts
+// Suku
+const requireAuth = middleware(async (ctx, next) => {
+  const header = ctx.headers.get('authorization');
+  if (!header) throw new UnauthorizedException();
+  ctx.set('user', await verifyToken(header));
+  return next();
+});
+
+route.get('/me', {
+  middlewares: [requireAuth],
+  handle: ({ ctx }) => ctx.get<User>('user'),
+});
+```
+
+| Express | Suku |
+| --- | --- |
+| `next()` | `return next()` |
+| `next(err)` | `throw err` |
+| `next('route')` | No equivalent. One route handles a request |
+| End the request early | Throw, or return a `Response` without calling `next()` |
+| `req.user`, `res.locals.user` | `ctx.set('user', user)` and `ctx.get<User>('user')` |
+
+<Callout type="warn" title="Always return next()">
+  A middleware must return a `Response`. Calling `next()` without returning or awaiting it,
+  as you would in Express, is the most common mistake when porting.
+</Callout>
+
+Express middleware packages cannot be passed to Suku, because they are written against Node's
+`req` and `res`. The common ones have a counterpart in the [concept map](#concept-map).
+
+## Routers
+
+An `express.Router()` mounted on a path becomes a group, a `@Routes` class, or a feature.
+
+```ts
+// Express
+const admin = express.Router();
+admin.use(requireAdmin);
+admin.get('/stats', (req, res) => res.json(getStats()));
+admin.post('/purge', (req, res) => res.json(purge()));
+
+app.use('/admin', admin);
+```
+
+```ts
+// Suku
+export const admin = route.group('/admin', { middlewares: [requireAdmin] }, {
+  stats: route.get('/stats', { handle: () => getStats() }),
+  purge: route.post('/purge', { status: 200, handle: () => purge() }),
+});
+
+const app = await Suku.create({ routes: [admin] });
+```
+
+Use a [feature](/docs/features) when the router also owns services. That is the unit to
+reach for where an Express app has a folder per resource.
+
+```ts
+export const UsersFeature = feature('users', {
+  prefix: '/users',
+  routes: [findOne, create],
+  services: [UsersService],
+  middlewares: [requireAuth],
+});
+```
+
+Registration order does not decide which route matches. `/users/me` wins over `/users/:id`
+wherever it is declared, and two routes with the same method and path are rejected at startup.
+
+## Errors
+
+Express error middleware takes four arguments and must be registered last. In Suku it is the
+`onError` option, and it returns a response instead of writing one.
+
+```ts
+// Express
+app.use((err, req, res, next) => {
+  if (err instanceof InsufficientFunds) {
+    return res.status(422).json({ code: 'insufficient_funds' });
+  }
+  next(err);
+});
+```
+
+```ts
+// Suku
+const domainErrors: ErrorHandler = (error) => {
+  if (error instanceof InsufficientFunds) {
+    return Response.json({ code: 'insufficient_funds' }, { status: 422 });
+  }
+};
+
+const app = await Suku.create({ features: [BillingFeature], onError: domainErrors });
+```
+
+Returning nothing passes the error on, like `next(err)`. An error nobody maps is logged and
+answered with a `500` that reveals nothing, so there is no stack trace to hide in production.
+
+`onError` attaches to a route, a group, a class, a feature or the app. A rejected promise is
+handled like a thrown error, as in Express 5. If you are coming from Express 4, the
+`try`/`catch` around every `async` handler and `express-async-errors` are no longer needed.
+
+## Validation
+
+In Express, validation is a middleware you remember to add, and `req.body` stays `any`. In
+Suku the schema is part of the route, and the handler is typed from it.
+
+```ts
+// Express, with express-validator
+app.post(
+  '/users',
+  body('email').isEmail(),
+  body('age').optional().isInt({ min: 0 }).toInt(),
+  (req, res) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) return res.status(400).json({ errors: errors.array() });
+    res.status(201).json(users.create(req.body));
+  },
+);
+```
+
+```ts
+// Suku
+route.post('/users', {
+  body: z.object({ email: z.email(), age: z.number().int().min(0).optional() }),
+  services: { users: UsersService },
+  handle: ({ body, users }) => users.create(body),   // body is { email: string; age?: number }
+});
+```
+
+Zod, Valibot, ArkType and any other [Standard Schema](https://standardschema.dev) library
+work. If you already have Zod schemas, keep them.
+
+## Sharing things between files
+
+Express has no opinion on how a route reaches the database, so most apps import a module
+that was set up on load. Suku gives each of those a [service](/docs/dependency-injection)
+with a lifetime, which also makes it replaceable in a test.
+
+```ts
+// Express
+import { db } from './db.js';
+
+app.get('/orders', async (req, res) => res.json(await db.orders.all()));
+```
+
+```ts
+// Suku
+@Service()
+export class OrdersService {
+  constructor(private readonly db: Database) {}
+  all() {
+    return this.db.orders.all();
+  }
+}
+
+route.get('/orders', {
+  services: { orders: OrdersService },
+  handle: ({ orders }) => orders.all(),
+});
+```
+
+You do not have to adopt this on day one. A route can import a module exactly as before, and
+an app made only of plain routes needs no decorators and no compiler options.
+
+## Testing
+
+`supertest` starts the Express app on a socket. `app.handle()` calls the app in process with
+a Fetch `Request`.
+
+```ts
+// Express
+const res = await request(app).post('/users').send({ name: 'Grace' });
+expect(res.status).toBe(201);
+```
+
+```ts
+// Suku
+const res = await app.handle(
+  new Request('http://test/users', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ name: 'Grace' }),
+  }),
+);
+expect(res.status).toBe(201);
+```
+
+## What changes in practice
+
+**`POST` answers `201`.** A `POST` route that returns data sends `201`, not `200`. Set
+`status: 200` on routes where a client depends on it, such as a login.
+
+**Returning nothing is `204`.** In Express a handler that never writes leaves the request
+hanging. In Suku it sends `204 No Content`.
+
+**Cookies are safe by default.** `ctx.cookies.set` sends `HttpOnly`, `Secure` and
+`SameSite=Lax` unless told otherwise. `res.cookie` sends none of them.
+
+**The body limit is 1 MiB.** `express.json()` stops at 100 kB. Change it with `bodyLimit` in
+`Suku.create`.
+
+**The wrong method is a `405`.** A known path with another method gets `405` and an `Allow`
+header, where Express answers `404`.
+
+**Wildcards are strings.** `/files/*path` gives `params.path` as one string such as
+`a/b/c`, where Express 5 gives an array of segments. There are no regular-expression paths;
+put the pattern in a `params` schema.
+
+**Query strings are flat.** `?tag=a&tag=b` is `{ tag: ['a', 'b'] }`. Bracket syntax such as
+`?filter[status]=open` is not expanded into nested objects.
+
+**No `trust proxy` setting.** `ctx.remoteAddress` is always the peer. The rate limiter takes
+its own `trustProxy` option; see [behind a proxy](/docs/deployment#behind-a-proxy).
+
+**Fetch, not Node streams.** `Request`, `Response`, `Headers`, `FormData` and
+`ReadableStream` replace `IncomingMessage` and `ServerResponse`, which is what lets the same
+app run on [Node, Bun](/docs/platforms) and edge runtimes.
+
+## Moving an app over
+
+1. Create the Suku app next to the Express one and move one router at a time, starting with
+   one that has few middlewares.
+2. Turn each `(req, res)` handler into a route: checks on `req` become schemas, `res.json(x)`
+   becomes `return x`, and an error status becomes a thrown exception.
+3. Rewrite your own middlewares as `(ctx, next)`, and swap third-party ones for
+   `@sukujs/security` or the built-in behaviour.
+4. Move the error middleware into one `onError` handler on the app.
+5. Port the `supertest` suite to `app.handle()` as you go. It is the quickest way to find a
+   status or header that changed.
+
+While both apps are running, a reverse proxy can send the paths you have moved to Suku and
+the rest to Express.
+
+## Not available
+
+Static file serving (`express.static`), view engines (`res.render`) and a session store
+(`express-session`) are not part of Suku. Serve static files from a CDN or the reverse
+proxy, and keep a session in a [sealed cookie](/docs/crypto/signed-and-sealed) or your own
+store. WebSockets are not part of Suku today.
