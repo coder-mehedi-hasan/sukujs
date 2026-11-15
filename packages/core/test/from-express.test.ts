@@ -85,7 +85,7 @@ describe('an app, translated', () => {
     expect((await app.handle(req('/users/9'))).status).toBe(404);
     const bad = await app.handle(req('/users/abc'));
     expect(bad.status).toBe(400);
-    expect((await bad.json()).issues.length).toBeGreaterThan(0);
+    expect(((await bad.json()) as { issues: unknown[] }).issues.length).toBeGreaterThan(0);
   });
 
   test('POST validates, authenticates and answers 201', async () => {
@@ -326,7 +326,9 @@ describe('validation, services and testing', () => {
   }
 
   test('the body schema validates and the service is injected', async () => {
-    const users = { create: (input: { email: string; age?: number }) => ({ id: 1, ...input }) };
+    const users = {
+      create: (input: { email: string; age?: number | undefined }) => ({ id: 1, ...input }),
+    };
     const app = await Suku.create({
       routes: [
         route.post('/users', {
