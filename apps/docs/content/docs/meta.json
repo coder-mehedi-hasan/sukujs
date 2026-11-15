@@ -28,6 +28,7 @@
     "deployment",
     "---Guides---",
     "graphql",
+    "from-express",
     "from-nestjs",
     "from-dotnet",
     "performance"
