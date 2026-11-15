@@ -26,6 +26,10 @@ async function project(name: string, ...flags: string[]) {
   const root = join(tmp, name);
   const tsconfig = JSON.parse(read(root, 'tsconfig.json'));
   tsconfig.compilerOptions.paths = { '@sukujs/*': [`${repo}/packages/*/src/index.ts`] };
+  // The paths above make tsc check the packages' source, not their declarations, and
+  // @sukujs/crypto's source (reached through @sukujs/security) needs the Web Crypto types.
+  // An installed project never checks it: the starter sets skipLibCheck.
+  tsconfig.compilerOptions.lib = [...tsconfig.compilerOptions.lib, 'DOM'];
   writeFileSync(join(root, 'tsconfig.json'), JSON.stringify(tsconfig, null, 2));
   return root;
 }
@@ -239,6 +243,12 @@ describe('a generated project', () => {
     expect(JSON.parse(read(root, 'package.json')).scripts['deploy:cloudflare']).toBe(
       'wrangler deploy',
     );
+    expect(JSON.parse(read(root, 'package.json')).dependencies['@sukujs/security']).toBeDefined();
+    expect(read(root, 'Dockerfile')).toContain('bun install --frozen-lockfile');
+    // Every entry point of the starter sets the defensive headers.
+    for (const entry of ['src/main.ts', 'src/worker.ts', 'api/index.ts']) {
+      expect(read(root, entry)).toContain('middlewares: [securityHeaders()]');
+    }
 
     expect((await cli(root, 'g', 'resource', 'products')).code).toBe(0);
     expect((await cli(root, 'g', 'res', 'categories', '--skip-tests')).code).toBe(0);
@@ -275,7 +285,12 @@ describe('a generated project', () => {
     }
     const url = /listening on (\S+)/.exec(text)?.[1];
     expect(url).toBeDefined();
-    expect(await (await fetch(`${url}/hello/Ada`)).json()).toEqual({ message: 'Hello, Ada!' });
+    const hello = await fetch(`${url}/hello/Ada`);
+    expect(await hello.json()).toEqual({ message: 'Hello, Ada!' });
+    expect(hello.headers.get('x-content-type-options')).toBe('nosniff');
+    expect(hello.headers.get('content-security-policy')).toContain("default-src 'none'");
+    // Unmatched routes get the headers too.
+    expect((await fetch(`${url}/nope`)).headers.get('x-frame-options')).toBe('DENY');
     expect(await (await fetch(`${url}/products`)).json()).toEqual([]);
     server.kill('SIGTERM');
     expect(await server.exited).toBe(0);
@@ -291,6 +306,7 @@ describe('a generated project', () => {
     };
     const response = await worker.fetch(new Request('http://edge/hello/Ada'), {});
     expect(await response.json()).toEqual({ message: 'Hello, Ada!' });
+    expect(response.headers.get('x-content-type-options')).toBe('nosniff');
   }, 60_000);
 });
 

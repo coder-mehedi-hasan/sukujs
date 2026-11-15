@@ -45,7 +45,8 @@ export function deployFiles(name: string, runtime: Runtime, targets: DeployTarge
 FROM oven/bun:1 AS build
 WORKDIR /app
 COPY package.json bun.lock* ./
-RUN bun install
+# With a lockfile the image gets exactly the versions you tested; without one, a fresh install.
+RUN if [ -f bun.lock ]; then bun install --frozen-lockfile; else bun install; fi
 COPY . .
 RUN bun run build
 
@@ -156,6 +157,7 @@ sudo systemctl enable --now ${name}
 
   if (targets.includes('cloudflare')) {
     out.files['src/worker.ts'] = `import { Suku, type SukuApplication } from '@sukujs/core';
+import { securityHeaders } from '@sukujs/security';
 import { AppFeature } from './app.feature';
 import { Env } from './config';
 
@@ -163,7 +165,10 @@ import { Env } from './config';
 let app: Promise<SukuApplication> | undefined;
 
 const createApp = async (env: Record<string, unknown>) =>
-  Suku.create({ features: [await Env.load({ ...env }), AppFeature] });
+  Suku.create({
+    features: [await Env.load({ ...env }), AppFeature],
+    middlewares: [securityHeaders()],
+  });
 
 export default {
   async fetch(request: Request, env: Record<string, unknown>): Promise<Response> {
@@ -201,10 +206,14 @@ bun run deploy:cloudflare
 
   if (targets.includes('vercel')) {
     out.files['api/index.ts'] = `import { Suku } from '@sukujs/core';
+import { securityHeaders } from '@sukujs/security';
 import { AppFeature } from '../src/app.feature';
 import { Env } from '../src/config';
 
-const app = await Suku.create({ features: [Env.load(), AppFeature] });
+const app = await Suku.create({
+  features: [Env.load(), AppFeature],
+  middlewares: [securityHeaders()],
+});
 
 // One function for the whole API. vercel.json sends every path here.
 export default {
