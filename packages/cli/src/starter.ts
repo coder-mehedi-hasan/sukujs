@@ -42,6 +42,7 @@ export function starter(options: StarterOptions): Record<string, string> {
     dependencies: {
       '@sukujs/core': range,
       [`@sukujs/${platform}`]: range,
+      '@sukujs/security': range,
       zod: '^4.0.0',
     },
     devDependencies: {
@@ -100,10 +101,16 @@ ${pmx} suku generate middleware audit
 ${extra.readme.length > 0 ? `\n## Deploy\n\n${extra.readme.join('\n\n')}\n` : ''}`,
     'src/main.ts': `import { Suku } from '@sukujs/core';
 import { ${adapter} } from '@sukujs/${platform}';
+import { securityHeaders } from '@sukujs/security';
 import { AppFeature } from './app.feature';
 import { Env } from './config';
 
-const app = await Suku.create({ features: [Env.load(), AppFeature], adapter: ${adapter}() });
+const app = await Suku.create({
+  features: [Env.load(), AppFeature],
+  // Defensive headers on every response, including 404s and errors.
+  middlewares: [securityHeaders()],
+  adapter: ${adapter}(),
+});
 
 const server = await app.listen(app.get(Env).PORT);
 console.log(\`listening on \${server.url}\`);

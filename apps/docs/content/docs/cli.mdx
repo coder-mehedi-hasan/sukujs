@@ -50,7 +50,7 @@ suku new my-api --runtime bun --deploy docker,cloudflare --skip-git
 ```text
 my-api/
   src/
-    main.ts              # creates the app, listens, shuts down on SIGTERM
+    main.ts              # creates the app with security headers, listens, shuts down on SIGTERM
     config.ts            # the environment, validated at startup
     app.feature.ts       # the root feature and a /health route
     app.test.ts          # tests that call the app in process
