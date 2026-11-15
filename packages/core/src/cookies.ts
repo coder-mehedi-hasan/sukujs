@@ -17,6 +17,10 @@ export interface CookieOptions {
 }
 
 const NAME = /^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/;
+/** RFC 6265 path-value: printable ASCII without `;`, which would start another attribute. */
+const PATH = /^[\x20-\x3a\x3c-\x7e]*$/;
+/** A host name, with the leading dot older clients expect allowed. */
+const DOMAIN = /^\.?[A-Za-z0-9](?:[A-Za-z0-9.-]*[A-Za-z0-9])?$/;
 
 /** Parses a `Cookie` request header into names and decoded values. */
 export function parseCookies(header: string | null | undefined): Record<string, string> {
@@ -46,7 +50,11 @@ export function serializeCookie(name: string, value: string, options: CookieOpti
   const secure = options.secure ?? true;
   if (sameSite === 'None' && !secure)
     throw new TypeError('A SameSite=None cookie must also be Secure.');
-  let out = `${name}=${encodeURIComponent(value)}; Path=${options.path ?? '/'}`;
+  const path = options.path ?? '/';
+  if (!PATH.test(path)) throw new TypeError(`Invalid cookie path: ${JSON.stringify(path)}`);
+  if (options.domain && !DOMAIN.test(options.domain))
+    throw new TypeError(`Invalid cookie domain: ${JSON.stringify(options.domain)}`);
+  let out = `${name}=${encodeURIComponent(value)}; Path=${path}`;
   if (options.domain) out += `; Domain=${options.domain}`;
   if (options.maxAge !== undefined) {
     if (!Number.isFinite(options.maxAge))

@@ -129,6 +129,25 @@ describe('cookies', () => {
     );
     expect(parseCookies('a=1; a=2; b=%E0%A4%A')).toEqual({ a: '1', b: '%E0%A4%A' });
   });
+
+  test('a path or domain that would add another attribute is refused', () => {
+    for (const path of ['/; Domain=evil.example', '/a;b', '/a\r\nSet-Cookie: x=1', '/é']) {
+      expect(() => serializeCookie('a', 'x', { path })).toThrow(/Invalid cookie path/);
+    }
+    for (const domain of [
+      'evil.example; Secure',
+      'a b.example',
+      'a,b',
+      '-a.example',
+      'a.example/',
+    ]) {
+      expect(() => serializeCookie('a', 'x', { domain })).toThrow(/Invalid cookie domain/);
+    }
+    expect(serializeCookie('a', 'x', { path: '/app/v1', domain: '.example.com' })).toBe(
+      'a=x; Path=/app/v1; Domain=.example.com; HttpOnly; Secure; SameSite=Lax',
+    );
+    expect(serializeCookie('a', 'x', { domain: 'localhost' })).toContain('Domain=localhost');
+  });
 });
 
 describe('response headers and status', () => {

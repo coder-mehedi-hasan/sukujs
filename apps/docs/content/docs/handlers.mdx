@@ -283,6 +283,9 @@ ctx.cookies.set('theme', 'dark', { httpOnly: false, maxAge: 31_536_000 });
 
 To delete a cookie, `path` and `domain` must match the ones it was set with.
 
+A `path` containing `;` or non-ASCII characters, or a `domain` that is not a host name, throws
+a `TypeError`, so a value taken from a request cannot add attributes to the cookie.
+
 <Callout title="Local development">
   Browsers accept `Secure` cookies on `http://localhost`, except Safari. If cookies vanish
   there, pass `secure: false` in development only.
