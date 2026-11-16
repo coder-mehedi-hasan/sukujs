@@ -6,7 +6,9 @@ const ROUTES_KEY = 'suku:routes';
 export interface RoutesOptions {
   /**
    * `singleton` (default): one instance for the app.
-   * `scoped`: a fresh instance per request, for classes that hold request-bound services.
+   * `scoped`: a fresh instance per request.
+   * Omitting this is fine when the class injects a scoped service — Suku promotes it
+   * to scoped automatically (Nest-like), same as setting `lifetime: 'scoped'` here.
    */
   lifetime?: Lifetime;
   middlewares?: MiddlewareRef[];

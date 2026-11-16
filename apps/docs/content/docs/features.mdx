@@ -39,9 +39,15 @@ services: [
   value(CONFIG, { port: 3000 }),      // an existing value
   factory(Mailer, (sp) => new Mailer(sp.get(Logger))),
   alias(Cache, RedisCache),
-  UsersService,                       // a bare class: singleton
+  UsersService,                       // bare class: @Service lifetime, else singleton
 ]
 ```
+
+<Callout type="warn" title="Helpers override `@Service`">
+  A bare class (`UsersService`) uses `@Service({ lifetime })` when present. Wrapping it in
+  `singleton(UsersService)`, `scoped(UsersService)` or `transient(UsersService)` **always**
+  wins over the decorator. See [services](/docs/dependency-injection#lifetimes).
+</Callout>
 
 The helpers check the implementation against the token.
 

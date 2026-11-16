@@ -42,8 +42,9 @@ route.get('/me', {
 });
 ```
 
-Only scoped and transient services can inject the context. A singleton that tries is a
-captive dependency, and Suku refuses to start.
+Only scoped and transient services can inject the context. A singleton that tries is promoted
+to scoped at startup. A scoped `@Routes` class may inject `RequestContext` in its constructor
+— it is resolved on each request, not when routes are discovered.
 
 ## Sharing state
 

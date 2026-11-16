@@ -235,15 +235,32 @@ describe('lifetimes', () => {
     get = route.get('/', { handle: () => ({ id: this.unit.id }) });
   }
 
-  test('scoped class: fresh instance per request, probe instance at startup, scope disposed', async () => {
+  test('scoped class: fresh instance per request; deps are not constructed at startup', async () => {
+    const before = n;
     const app = await Suku.create({ routes: [ScopedRoutes], services: [scoped(Unit)] });
-    const probeId = n; // constructed once at startup to discover the routes
+    expect(n).toBe(before); // discovery must not resolve scoped dependencies
     const a = (await (await app.handle(req('/scoped'))).json()) as { id: number };
     const b = (await (await app.handle(req('/scoped'))).json()) as { id: number };
-    expect(a.id).toBe(probeId + 1);
-    expect(b.id).toBe(probeId + 2);
+    expect(a.id).toBe(before + 1);
+    expect(b.id).toBe(before + 2);
     expect(disposed).toContain(a.id);
     expect(disposed).toContain(b.id);
+  });
+
+  test('singleton @Routes that injects a scoped service is promoted', async () => {
+    @Routes('/auto')
+    class AutoScoped {
+      constructor(private readonly unit: Unit) {}
+      get = route.get('/', { handle: () => ({ id: this.unit.id }) });
+    }
+    const before = n;
+    const app = await Suku.create({ routes: [AutoScoped], services: [scoped(Unit)] });
+    expect(n).toBe(before);
+    const a = (await (await app.handle(req('/auto'))).json()) as { id: number };
+    const b = (await (await app.handle(req('/auto'))).json()) as { id: number };
+    expect(a.id).toBe(before + 1);
+    expect(b.id).toBe(before + 2);
+    expect(a.id).not.toBe(b.id);
   });
 
   test('per-route services give request-scoped values to a singleton class', async () => {
@@ -258,13 +275,14 @@ describe('lifetimes', () => {
     expect(await (await app.handle(req('/who'))).json()).toEqual({ same: true, unit: 'number' });
   });
 
-  test('a scoped class that needs a live request at construction fails with guidance', async () => {
+  test('a scoped class can inject RequestContext in its constructor', async () => {
     @Routes('/x', { lifetime: 'scoped' })
     class NeedsRequest {
       constructor(readonly ctx: RequestContext) {}
-      get = route.get('/', { handle: () => 'x' });
+      get = route.get('/', { handle: () => ({ name: this.ctx.route?.name }) });
     }
-    await expect(Suku.create({ routes: [NeedsRequest] })).rejects.toThrow(/services` option/);
+    const app = await Suku.create({ routes: [NeedsRequest] });
+    expect(await (await app.handle(req('/x'))).json()).toEqual({ name: 'NeedsRequest.get' });
   });
 });
 

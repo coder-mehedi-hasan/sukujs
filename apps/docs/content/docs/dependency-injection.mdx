@@ -1,16 +1,22 @@
 ---
 title: Services
-description: Declaring services with or without a class, lifetimes, tokens, validation and disposal.
+description: What a service is, how to write and register one, how long it lives, and how it is cleaned up.
 icon: Boxes
 ---
 
-A service is anything your routes and other services depend on: a repository, a mailer, a
-clock. Suku resolves them from a container modelled on .NET's, where every service has an
-explicit lifetime. Like routes, a service can be written with a class or without one.
+A **service** is a piece of code that other code uses: a database connection, a mailer, a
+class that finds users. You write it once, and Suku hands it to every route or service that
+asks for it. You never write `new UsersService(...)` yourself.
+
+The part of Suku that creates services and hands them out is called the **container**.
+
+## Write a service
+
+There are two ways. Both do the same job, so pick the one you like.
 
 <Tabs items={['With a class', 'Without a class']}>
   <Tab value="With a class">
-    Dependencies arrive through the constructor.
+    List what the service needs in the constructor. Suku passes it in.
 
     ```ts
     import { Service } from '@sukujs/core';
@@ -26,7 +32,8 @@ explicit lifetime. Like routes, a service can be written with a class or without
     ```
   </Tab>
   <Tab value="Without a class">
-    The service lists what it needs and returns its implementation. Its type is inferred.
+    List what the service needs in `services`, and return the service from `create`. Its type
+    is worked out for you.
 
     ```ts
     import { service } from '@sukujs/core';
@@ -41,29 +48,122 @@ explicit lifetime. Like routes, a service can be written with a class or without
   </Tab>
 </Tabs>
 
-Both register the same way and can depend on each other.
+## Register it
+
+A service must be registered before anything can use it. Add it to the `services` of a
+feature, or of `Suku.create`.
 
 ```ts
 feature('users', { services: [UsersService] });
 ```
 
+Both kinds of service register the same way, and each can depend on the other.
+
+## Use it
+
+In a route, name the services you need. They arrive in the handler.
+
+```ts
+route.get('/users/:id', {
+  services: { users: UsersService },
+  handle: ({ users, params }) => users.find(Number(params.id)),
+});
+```
+
+In a class, ask for it in the constructor, as `UsersService` asks for `Database` above.
+
 ## When `@Service()` is needed
 
-The decorator has no behaviour of its own. It makes TypeScript record the constructor's
-parameter types, which is how the container knows what to pass.
+`@Service()` does nothing by itself. It only makes TypeScript write down the types of the
+constructor's parameters, which is how Suku knows what to pass in.
 
-| Class | Needs `@Service()`? |
+| Your class | Needs `@Service()`? |
 | --- | --- |
-| No constructor parameters | No |
-| Constructor parameters | Yes, or a `static inject` array |
-| Already decorated with `@Routes()` | No |
-| Wants a default lifetime | `@Service({ lifetime: 'scoped' })`, or register with `scoped(...)` |
+| Has no constructor parameters | No |
+| Has constructor parameters | Yes, or a `static inject` array |
+| Already has `@Routes()` | No |
+| Should have a default lifetime | `@Service({ lifetime: 'scoped' })`, or register with `scoped(...)` |
 
-Forgetting it on a class that needs it fails at startup with a message naming the class.
+If you forget it on a class that needs it, the app stops at startup with a message that names
+the class.
+
+## Lifetimes
+
+A **lifetime** says how long one copy of a service lives, and who shares it. There are three.
+
+| Lifetime | How many are created | Use it for |
+| --- | --- | --- |
+| `singleton` | One for the whole app. Every request gets the same one. | Configuration, database connections, services that keep no per-request data. |
+| `scoped` | One for each request. A new request gets a new one. | The current user, a transaction, anything that belongs to one request. |
+| `transient` | A new one every time something asks for it. | Small helpers that should never be shared. |
+
+`singleton` is the default. When you are unsure, use it.
+
+A lifetime given with `singleton(...)`, `scoped(...)` or `transient(...)` always wins over the
+one written in `@Service({ lifetime })`.
+
+Choose the lifetime when you register the service.
+
+```ts
+import { scoped, singleton, transient } from '@sukujs/core';
+
+services: [singleton(Database), scoped(Cart), transient(Ticket)];
+```
+
+A service is created the first time something needs it, not when the app starts.
+
+<Callout title="What is a scope?">
+  A scope is a box that holds the services made for one piece of work. Suku opens a scope for
+  every request and closes it when the request ends. A scoped service lives in that box. This
+  is why you cannot ask for a scoped service outside a request: there is no box to put it in,
+  and Suku throws an error.
+</Callout>
+
+`examples/lifecycle` in the repository is a small app that prints a line each time a service
+is created or cleaned up. Run it to see the three lifetimes side by side.
+
+## Cleaning up (disposal) [#disposal]
+
+Some services hold something that must be closed: a database connection, a file, a timer.
+Give the service a `dispose()` method and Suku calls it when the service is no longer needed.
+This is called **disposing** the service. You never call `dispose()` yourself.
+
+```ts
+@Service()
+class UnitOfWork {
+  async dispose() {
+    await this.connection.release();
+  }
+}
+```
+
+When it is called depends on the lifetime.
+
+| Lifetime | Disposed when |
+| --- | --- |
+| `singleton` | The app closes (`app.close()`). |
+| `scoped` | The request ends. |
+| `transient` | The request that asked for it ends. If a singleton asked for it, when the app closes. |
+
+Good to know:
+
+- **`dispose()` is optional.** A service without it is simply dropped.
+- **It can be `async`.** Suku waits for it to finish.
+- **The newest service is disposed first.** A service is therefore always cleaned up before
+  the services it depends on.
+- **There is no "on start" method.** Do setup work in the constructor, or in `create`.
+- **`value()` registrations are never disposed.** You made the object, so you clean it up.
+
+<Callout title="Other names for dispose()">
+  Suku also accepts `onDispose()`, `[Symbol.dispose]()` and `[Symbol.asyncDispose]()`. If a
+  service has more than one of these, only one is called. The order of preference is
+  `[Symbol.asyncDispose]`, `[Symbol.dispose]`, `dispose`, `onDispose`.
+</Callout>
 
 ## Services without a class
 
-`service(name, options)` returns a value that is both the registration and the token.
+`service(name, options)` returns one value that you use everywhere: to register the service
+and to ask for it.
 
 ```ts
 export const Clock = service('clock', () => ({ now: () => new Date() }));
@@ -77,7 +177,7 @@ export const Invoices = service('invoices', {
 });
 ```
 
-Use it by name in a route, or in another service.
+Ask for it by name in a route, or in another service.
 
 ```ts
 route.get('/invoices/due', {
@@ -86,7 +186,7 @@ route.get('/invoices/due', {
 });
 ```
 
-In a class constructor, inject it with its token and take the type with `ServiceOf`.
+In a class constructor, use `@Inject` to ask for it and `ServiceOf` to get its type.
 
 ```ts
 @Service()
@@ -95,43 +195,18 @@ class Reports {
 }
 ```
 
-Declared dependencies are checked at startup exactly like constructor parameters: a missing
-one, or a singleton depending on a scoped service, stops the app before it listens. An object
-with a `dispose()` method is disposed with its scope.
-
-## Using the container directly
-
-`@sukujs/di` also works on its own, without HTTP.
-
-```ts
-import { ServiceCollection } from '@sukujs/di';
-
-const provider = new ServiceCollection()
-  .addSingleton(Database)
-  .addScoped(UsersService)
-  .build({ validateOnBuild: true });
-
-const scope = provider.createScope();
-scope.get(UsersService);
-await scope.dispose();
-```
-
-## Lifetimes
-
-| Lifetime | Instances | Typical use |
-| --- | --- | --- |
-| `singleton` | One for the application. | Configuration, connection pools, stateless services. |
-| `scoped` | One per scope. Suku opens a scope for every request. | Unit of work, current user, request-bound state. |
-| `transient` | One per resolve. | Cheap, stateful helpers. |
-
-Resolving a scoped service from the root provider throws. Create a scope first.
+Everything else works as it does for a class. The services it needs are checked at startup,
+and if the object you return has a `dispose()` method, it is disposed like any other service.
 
 ## Tokens
 
-A token identifies a registration. Classes are their own tokens.
+A **token** is the name you use to ask for a service. A class is its own token, so most of the
+time you do not think about tokens at all.
 
-Interfaces do not exist at runtime, so use an **abstract class** where .NET would use an
-interface.
+You need one in two cases.
+
+**The service has several possible implementations.** TypeScript interfaces do not exist when
+the code runs, so use an **abstract class** as the token.
 
 ```ts
 export abstract class Cache {
@@ -141,14 +216,15 @@ export abstract class Cache {
 @Service()
 export class RedisCache extends Cache { /* ... */ }
 
-services: [singleton(Cache, RedisCache)];
+services: [singleton(Cache, RedisCache)];   // "when someone asks for Cache, give RedisCache"
 
 class Uses {
   constructor(private readonly cache: Cache) {}   // no decorator needed
 }
 ```
 
-For values with no class, use an `InjectionToken` and `@Inject`.
+**The value is not a class at all**, such as a settings object. Create an `InjectionToken`
+and ask for it with `@Inject`.
 
 ```ts
 export const CONFIG = new InjectionToken<{ port: number }>('CONFIG');
@@ -160,11 +236,13 @@ class Server {
 }
 ```
 
-`@Optional()` yields `undefined` instead of throwing when nothing is registered.
+Add `@Optional()` to a parameter to receive `undefined`, instead of an error, when nothing is
+registered for it.
 
 ## Without decorators
 
-To keep a class but avoid decorators, list its dependencies in a static `inject` array.
+If you want a class but no decorators, list what it needs in a static `inject` array, in the
+same order as the constructor parameters.
 
 ```ts
 class UsersRepository {
@@ -179,7 +257,7 @@ class UsersRepository {
 
 ## Keyed services
 
-Register several implementations of one token under keys.
+To register several implementations of one token and pick between them, give each one a key.
 
 ```ts
 services: [
@@ -194,54 +272,62 @@ class Uploader {
 
 ## Several registrations of one token
 
-`get()` returns the last registration. `getAll()` returns every one, in order, which suits
-plugin lists.
+You can register the same token more than once. `get()` returns the last one registered.
+`getAll()` returns all of them, in order, which is useful for a list of plugins.
 
 ```ts
 provider.getAll(HealthCheck).map((check) => check.run());
 ```
 
-## Startup validation [#captive-dependencies]
+## Mistakes caught at startup
 
-`Suku.create` builds the container with `validateOnBuild`, so mistakes surface before the
-server listens.
+`Suku.create` checks every service before the server starts listening. A mistake stops the
+app at once, with a message that says what is wrong.
 
-| Problem | Error |
+| Mistake | Error |
 | --- | --- |
-| A constructor, service or route needs a service that is not registered. | `MissingServiceError` |
-| Services depend on each other in a loop. | `CircularDependencyError` |
-| A singleton depends on a scoped service. | `CaptiveDependencyError` |
-| A parameter's type is an interface or primitive with no `@Inject`. | `UnresolvableParameterError` |
+| Something needs a service that was never registered. | `MissingServiceError` |
+| Two or more services need each other, in a loop. | `CircularDependencyError` |
+| A constructor parameter is an interface or a plain type, with no `@Inject`. | `UnresolvableParameterError` |
 
-A **captive dependency** is a long-lived service holding a short-lived one: a singleton that
-captures a scoped unit of work would keep the first request's instance forever. The messages
-include the resolution chain.
+## A singleton that needs a scoped service [#captive-dependencies]
+
+A singleton lives for the whole app, and a scoped service lives for one request. If a
+singleton kept a scoped service, it would hold on to the one from the first request forever,
+and every later request would share it. This is called a **captive dependency**.
+
+Suku prevents it for you. At startup, a singleton that needs a scoped service **becomes
+scoped itself**. So does anything that needs that service, all the way up. Each request then
+gets its own copy of the whole chain.
+
+```ts
+services: [scoped(UnitOfWork), singleton(Reports)];   // Reports needs UnitOfWork
+
+// Reports is now scoped: one per request, like UnitOfWork.
+```
+
+Because it is now scoped, you can no longer ask for it outside a request.
+
+If you want a singleton to stay a singleton, do not put the scoped service in its
+constructor. Ask for it in a route's `services` instead.
+
+To make Suku stop with an error instead of changing the lifetime, turn the strict mode on.
+
+```ts
+await Suku.create({ di: { captiveDependencies: 'error' } });
+```
 
 ```text
 Captive dependency: OrdersRoutes (singleton) depends on UnitOfWork (scoped).
 ```
 
-## Disposal
-
-When a scope or the root provider is disposed, the instances it created are disposed newest
-first. A service takes part by having any of `dispose()`, `onDispose()`, `[Symbol.dispose]()`
-or `[Symbol.asyncDispose]()`.
-
-```ts
-@Service()
-class UnitOfWork {
-  async dispose() {
-    await this.connection.release();
-  }
-}
-```
-
-Values registered with `value()` are never disposed, because the container did not create
-them. Providers support `await using`.
-
 ## The provider is injectable
 
-A class may ask for the `ServiceProvider` and receives the scope it is being resolved in.
+The **provider** is the object you ask for services by hand: `provider.get(UsersService)`.
+You rarely need it, because the constructor and a route's `services` do the asking for you.
+
+When you do need it, for example to pick a service while the app is running, ask for
+`ServiceProvider`. You receive the one for the current request.
 
 ```ts
 class JobRunner {
@@ -252,3 +338,23 @@ class JobRunner {
   }
 }
 ```
+
+## Using the container directly
+
+`@sukujs/di` also works by itself, with no HTTP involved. Here you create and dispose the
+scope yourself.
+
+```ts
+import { ServiceCollection } from '@sukujs/di';
+
+const provider = new ServiceCollection()
+  .addSingleton(Database)
+  .addScoped(UsersService)
+  .build({ validateOnBuild: true });
+
+const scope = provider.createScope();
+scope.get(UsersService);
+await scope.dispose();
+```
+
+A provider also works with `await using`, which disposes it at the end of the block.

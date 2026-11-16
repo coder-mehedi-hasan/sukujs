@@ -177,8 +177,8 @@ export const admin = route.group('/admin', { middlewares: [requireAdmin] }, {
 A routes class is a singleton by default. Fields that are not routes are ignored, and a class
 with no route fields is rejected at startup.
 
-For request-bound services, prefer the route's `services` option, which works in a singleton
-class:
+Constructor-injecting a scoped service promotes the class to scoped automatically (Nest-like).
+To keep the class a singleton, take request-bound services on the route instead:
 
 ```ts
 @Routes('/orders')
@@ -193,10 +193,11 @@ export class OrdersRoutes {
 }
 ```
 
-Alternatively make the whole class scoped with `@Routes('/orders', { lifetime: 'scoped' })`.
+Or declare it explicitly with `@Routes('/orders', { lifetime: 'scoped' })`.
 
-<Callout title="Scoped classes are built once at startup">
-  Routes live on instances, so Suku constructs each class once at startup to discover them. A
-  scoped class must therefore be constructible without a live request. If its constructor
-  needs the `RequestContext`, use the `services` option instead.
+<Callout title="Scoped classes and startup">
+  At startup Suku builds a throwaway instance with empty constructor arguments only to read
+  route fields — injected services are **not** created then. The real instance (and its
+  scoped dependencies) is constructed per request. Do not touch constructor parameters in
+  the constructor body or in field initializers.
 </Callout>

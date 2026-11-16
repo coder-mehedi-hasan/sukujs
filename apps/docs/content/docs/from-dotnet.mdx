@@ -53,7 +53,8 @@ class Invoices {
 
 - The last registration for a token wins; `getAll` returns them all in order.
 - Resolving a scoped service from the root provider throws.
-- A singleton that depends on a scoped service is rejected as a captive dependency.
+- A singleton that depends on a scoped service is promoted to scoped by default (Nest-like).
+  Pass `di: { captiveDependencies: 'error' }` for .NET-style rejection.
 - Disposal runs in reverse order of creation. Instances you registered yourself are left alone.
 
 ## Routes classes are singletons by default

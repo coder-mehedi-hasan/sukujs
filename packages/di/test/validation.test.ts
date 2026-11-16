@@ -22,7 +22,24 @@ describe('validateOnBuild', () => {
     expect(() => c.build()).not.toThrow();
   });
 
-  test('singleton depending on scoped fails at build as a captive dependency', () => {
+  test('singleton depending on scoped is promoted to scoped (Nest-like)', () => {
+    @Service()
+    class Scoped {}
+    @Service()
+    class Single {
+      constructor(public s: Scoped) {}
+    }
+    const sp = new ServiceCollection()
+      .addScoped(Scoped)
+      .addSingleton(Single)
+      .build({ validateOnBuild: true });
+    expect(sp.lifetimeOf(Single)).toBe('scoped');
+    expect(() => sp.get(Single)).toThrow(); // still not resolvable from root
+    const scope = sp.createScope();
+    expect(scope.get(Single).s).toBe(scope.get(Scoped));
+  });
+
+  test('captiveDependencies: error keeps .NET-like rejection', () => {
     @Service()
     class Scoped {}
     @Service()
@@ -30,23 +47,32 @@ describe('validateOnBuild', () => {
       constructor(public s: Scoped) {}
     }
     const c = new ServiceCollection().addScoped(Scoped).addSingleton(Single);
-    expect(() => c.build({ validateOnBuild: true })).toThrow(CaptiveDependencyError);
+    expect(() =>
+      c.build({ validateOnBuild: true, captiveDependencies: 'error' }),
+    ).toThrow(CaptiveDependencyError);
     expect(() => c.build({ validateOnBuild: true, validateScopes: false })).not.toThrow();
   });
 
-  test('captive detection follows useExisting aliases', () => {
+  test('promotion follows useExisting aliases and bubbles up the chain', () => {
     @Service()
     class Scoped {}
     abstract class Alias {}
     @Service()
-    class Single {
+    class Mid {
       constructor(public a: Alias) {}
     }
-    const c = new ServiceCollection()
+    @Service()
+    class Top {
+      constructor(public mid: Mid) {}
+    }
+    const sp = new ServiceCollection()
       .addScoped(Scoped)
       .addScoped(Alias, { useExisting: Scoped })
-      .addSingleton(Single);
-    expect(() => c.build({ validateOnBuild: true })).toThrow(CaptiveDependencyError);
+      .addSingleton(Mid)
+      .addSingleton(Top)
+      .build({ validateOnBuild: true });
+    expect(sp.lifetimeOf(Mid)).toBe('scoped');
+    expect(sp.lifetimeOf(Top)).toBe('scoped');
   });
 
   test('scoped depending on transient and singleton depending on transient are fine', () => {

@@ -147,22 +147,23 @@ export function createKernel(
     const meta = getRoutesMetadata(cls)!;
     const singleton = isSingleton(cls);
     let instance: Record<string, unknown>;
-    let probe: ServiceProvider | undefined;
     try {
       if (singleton) {
         instance = provider.get(cls) as Record<string, unknown>;
       } else {
-        // Routes live on instances, so one is built at startup to discover them.
-        probe = provider.createScope();
-        instance = probe.get(cls) as Record<string, unknown>;
+        // Discover route fields without resolving DI. Scoped dependencies (and RequestContext)
+        // are constructed on the first real request, not at startup.
+        instance = new cls(...new Array(cls.length).fill(undefined)) as Record<string, unknown>;
       }
     } catch (cause) {
       throw new FeatureError(
-        `Could not construct ${cls.name} at startup to discover its routes: ${(cause as Error).message}` +
+        `Could not discover routes on ${cls.name}: ${(cause as Error).message}` +
           (singleton
             ? ''
-            : ' A scoped @Routes class must be constructible without a live request; take request-bound ' +
-              "services through a route's `services` option instead of the constructor."),
+            : ' A scoped @Routes class is constructed with empty constructor arguments at startup ' +
+              'only to read its route fields; do not touch injected dependencies in the constructor ' +
+              "body or field initializers. Prefer a route's `services` option for request-bound values " +
+              'if that is awkward.'),
         { cause },
       );
     }
@@ -178,7 +179,6 @@ export function createKernel(
       count++;
       addRoute(value, `${cls.name}.${field}`, inner, singleton ? undefined : { cls, field });
     }
-    void probe?.dispose();
     if (count === 0) {
       throw new FeatureError(
         `${cls.name} is decorated with @Routes() but declares no route fields. Add one with route.get(...).`,
@@ -187,6 +187,9 @@ export function createKernel(
   };
 
   const isSingleton = (cls: Constructor): boolean => {
+    // Prefer the registered lifetime: Nest-like promotion may have widened a singleton to scoped.
+    const registered = provider.lifetimeOf(cls);
+    if (registered) return registered === 'singleton';
     const lifetime =
       getRoutesMetadata(cls)?.lifetime ?? getServiceOptions(cls)?.lifetime ?? 'singleton';
     return lifetime === 'singleton';

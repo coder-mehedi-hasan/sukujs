@@ -7,7 +7,7 @@ import {
   ScopedFromRootError,
 } from './errors.js';
 import { getConstructorParameters } from './reflection.js';
-import type { Constructor, Token } from './types.js';
+import type { Constructor, Lifetime, Token } from './types.js';
 
 export interface ServiceProviderOptions {
   /**
@@ -21,6 +21,12 @@ export interface ServiceProviderOptions {
    * and development).
    */
   validateOnBuild?: boolean;
+  /**
+   * What to do when a longer-lived service depends on a scoped one.
+   * - `'promote'` (default, Nest-like): widen the consumer to `scoped` (and bubble up the chain).
+   * - `'error'` (.NET-like): throw `CaptiveDependencyError`.
+   */
+  captiveDependencies?: 'promote' | 'error';
 }
 
 interface Disposable {
@@ -76,6 +82,8 @@ export abstract class ServiceProvider {
   abstract getKeyed<T>(token: Token<T>, key: unknown): T;
   abstract getKeyedOptional<T>(token: Token<T>, key: unknown): T | undefined;
   abstract has(token: Token, key?: unknown): boolean;
+  /** Lifetime of the last registration for `token`, after build-time scope promotion. */
+  abstract lifetimeOf(token: Token, key?: unknown): Lifetime | undefined;
 
   /**
    * Constructs a class that is not registered, resolving its constructor parameters from
@@ -103,12 +111,13 @@ class Registry {
   readonly options: Required<ServiceProviderOptions>;
 
   constructor(
-    readonly descriptors: readonly ServiceDescriptor[],
+    readonly descriptors: ServiceDescriptor[],
     options: ServiceProviderOptions,
   ) {
     this.options = {
       validateScopes: options.validateScopes ?? true,
       validateOnBuild: options.validateOnBuild ?? false,
+      captiveDependencies: options.captiveDependencies ?? 'promote',
     };
     for (const d of descriptors) {
       if (d.key === undefined) {
@@ -182,6 +191,11 @@ class Container extends ServiceProvider {
 
   has(token: Token, key?: unknown): boolean {
     return token === ServiceProvider || (this.registry.lookup(token, key)?.length ?? 0) > 0;
+  }
+
+  lifetimeOf(token: Token, key?: unknown): Lifetime | undefined {
+    const list = this.registry.lookup(token, key);
+    return list?.[list.length - 1]?.lifetime;
   }
 
   create<T>(cls: Constructor<T>): T {
@@ -338,25 +352,32 @@ function validate(registry: Registry): void {
     return deps;
   };
 
-  const rank: Record<string, number> = { singleton: 2, scoped: 1, transient: 0 };
-
-  // Pass 1: resolvability and captive dependencies.
-  for (const d of registry.descriptors) {
-    for (const dep of dependenciesOf(d)) {
-      const target = concrete(dep);
-      if (
-        validateScopes &&
-        d.kind !== 'value' &&
-        target.kind !== 'value' &&
-        d.lifetime === 'singleton' &&
-        target.lifetime === 'scoped'
-      ) {
-        throw new CaptiveDependencyError(d, target);
+  // Pass 1: resolvability and captive dependencies (Nest-like promote, or .NET-like error).
+  const captiveMode = registry.options.captiveDependencies;
+  if (validateScopes) {
+    let changed = true;
+    while (changed) {
+      changed = false;
+      for (const d of registry.descriptors) {
+        for (const dep of dependenciesOf(d)) {
+          const target = concrete(dep);
+          if (
+            d.kind === 'value' ||
+            target.kind === 'value' ||
+            d.lifetime !== 'singleton' ||
+            target.lifetime !== 'scoped'
+          ) {
+            continue;
+          }
+          if (captiveMode === 'error') throw new CaptiveDependencyError(d, target);
+          (d as { lifetime: Lifetime }).lifetime = 'scoped';
+          changed = true;
+        }
       }
-      // A scoped service holding a transient is fine; singleton->transient is fine too
-      // (.NET semantics). Only longer-lived -> scoped is a captive.
-      void rank;
     }
+  } else {
+    // Still walk dependencies so missing services are reported.
+    for (const d of registry.descriptors) void dependenciesOf(d);
   }
 
   // Pass 2: cycles, via DFS over class dependencies.
@@ -385,7 +406,12 @@ export function buildServiceProvider(
   descriptors: readonly ServiceDescriptor[],
   options: ServiceProviderOptions = {},
 ): ServiceProvider {
-  const registry = new Registry(descriptors, options);
+  // Shallow-copy so Nest-like lifetime promotion cannot mutate the caller's descriptors
+  // (e.g. the canonical descriptor on a `service()` definition).
+  const registry = new Registry(
+    descriptors.map((d) => ({ ...d })),
+    options,
+  );
   if (registry.options.validateOnBuild) validate(registry);
   return new Container(registry, null);
 }

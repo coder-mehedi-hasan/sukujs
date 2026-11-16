@@ -68,8 +68,14 @@ describe('service() without a class', () => {
     );
     const Scoped = service('scoped', { lifetime: 'scoped', create: () => ({}) });
     const Captor = service('captor', { services: { s: Scoped }, create: ({ s }) => ({ s }) });
+    const promoted = new ServiceCollection()
+      .addRange([Scoped, Captor])
+      .build({ validateOnBuild: true });
+    expect(promoted.lifetimeOf(Captor)).toBe('scoped');
     expect(() =>
-      new ServiceCollection().addRange([Scoped, Captor]).build({ validateOnBuild: true }),
+      new ServiceCollection()
+        .addRange([Scoped, Captor])
+        .build({ validateOnBuild: true, captiveDependencies: 'error' }),
     ).toThrow(CaptiveDependencyError);
   });
 

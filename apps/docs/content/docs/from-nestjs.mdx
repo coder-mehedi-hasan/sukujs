@@ -69,9 +69,10 @@ export class UsersRoutes {
 
 ## What changes in practice
 
-**Lifetimes are strict.** In NestJS a request-scoped provider quietly makes everything that
-depends on it request-scoped. In Suku a singleton that depends on a scoped service is rejected
-at startup. Take request-bound services through a route's `services` option.
+**Lifetimes bubble like Nest.** A singleton that depends on a scoped service is promoted to
+scoped at startup (including `@Routes` classes). Prefer a route's `services` option when you
+want the class itself to stay a singleton. Pass `di: { captiveDependencies: 'error' }` for
+.NET-style rejection instead.
 
 **One container.** Every service is visible everywhere. There is no `exports`.
 
