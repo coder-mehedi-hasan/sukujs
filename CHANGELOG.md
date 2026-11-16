@@ -5,8 +5,9 @@ version and are released together.
 
 ## 0.3.0 — 2026-11-16
 
-Suku 0.3.0 hardens CSRF and cookies, improves JWT error handling, and gives new CLI projects
-security headers by default. Every `@sukujs/*` package is published at 0.3.0.
+Suku 0.3.0 hardens CSRF and cookies, improves DI lifetimes for request-scoped services, and
+gives new CLI projects security headers by default. Every `@sukujs/*` package is published at
+0.3.0.
 
 ### Breaking Changes
 
@@ -21,6 +22,15 @@ throws at startup.
 pass `cookieName: 'csrf'` when configuring CSRF. Prefer binding tokens to a session with the
 new `sessionId` option so a token from one session is rejected on another.
 
+#### Captive scoped dependencies are promoted
+
+A singleton that depends on a scoped service is **promoted to scoped** at startup (including
+`@Routes` classes), instead of failing with `CaptiveDependencyError`.
+
+**Migration:** if you relied on the error, pass `di: { captiveDependencies: 'error' }` to
+`Suku.create`. To keep a routes class as a singleton while using scoped services, take those
+services through the route's `services` option instead of the constructor.
+
 ### Features
 
 - **CSRF `sessionId` option** — include the caller's session id in what is signed, so a token
@@ -29,8 +39,12 @@ new `sessionId` option so a token from one session is rejected on another.
   `securityHeaders()` on Node, Cloudflare Workers and Vercel entry points. Generated Dockerfiles
   use `bun install --frozen-lockfile` when `bun.lock` exists
   ([#7](https://github.com/sukujs/sukujs/issues/7)).
+- **Scoped `@Routes` discovery** — route fields are discovered without resolving constructor
+  dependencies, so scoped services are created on the request, not at process start. Scoped
+  classes may inject `RequestContext` in the constructor.
 - **Coming from Express** — guide mapping Express routes, middleware, routers, error handlers
   and common packages onto Suku, with a suite that runs the guide's examples.
+- **Examples** — `examples/lifecycle` and `examples/base` demonstrate service lifetimes.
 
 ### Fixes
 
@@ -40,5 +54,12 @@ new `sessionId` option so a token from one session is rejected on another.
 - **JWT verify** — a signature that is not base64url raises `JwtError('malformed')` instead of
   a generic crypto error, so callers that map `JwtError` to 401 no longer return 500 for a
   client-controlled token ([#5](https://github.com/sukujs/sukujs/issues/5)).
+
+### Documentation
+
+- Services docs cover registration helpers overriding `@Service({ lifetime })`, routes + shared
+  counters, and lifetime bubbling.
+- Nest / .NET migration pages and request-context / routes callouts updated for the new DI
+  behaviour.
 
 **Full changelog**: https://github.com/sukujs/sukujs/compare/v0.2.0...v0.3.0
