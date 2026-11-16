@@ -1,10 +1,11 @@
 ---
+
 name: suku-release-notes
 description: >-
-  Run a full Suku release: write CHANGELOG notes, bump every @sukujs/* package to
-  one shared version, tag, publish a public GitHub Release, then publish all
-  packages to npm together. Use when releasing Suku, cutting vX.Y.Z, shipping to
-  GitHub/npm, or updating unified package versions.
+Run a full Suku release: write CHANGELOG notes, bump every @sukujs/* package to
+one shared version, tag, publish a public GitHub Release, then publish all
+packages to npm together. Use when releasing Suku, cutting vX.Y.Z, shipping to
+GitHub/npm, or updating unified package versions.
 disable-model-invocation: true
 ---
 
@@ -38,17 +39,22 @@ End-to-end release for this monorepo. **One version** for every package under
 Suku X.Y.Z <one-sentence summary>. Every `@sukujs/*` package is published at X.Y.Z.
 
 ### Breaking Changes
+
 #### <Title>
+
 <Why.>
 **Migration:** <steps.>
 
 ### Features
+
 - **<Name>** — <impact>. ([#N](https://github.com/sukujs/sukujs/issues/N))
 
 ### Fixes
+
 - **<Area>** — <impact>.
 
 ### Documentation
+
 - <Guides/examples.>
 
 **Full changelog**: https://github.com/sukujs/sukujs/compare/vPREV...vX.Y.Z
@@ -93,14 +99,17 @@ Verify: `gh release view "vX.Y.Z" --json url,isDraft` and return the URL.
 
 1. User must be logged in (`npm whoami`). Agent does not run `npm login`.
 2. Dry run and show output:
+
    ```bash
    bun run release:dry-run
    ```
 3. **Stop and get explicit go-ahead** for version `X.Y.Z`.
 4. Tell the user to run in **their** terminal (2FA per package):
+
    ```bash
    bun run release:publish
    ```
+
    Preconditions enforced by `scripts/publish.ts`: unified versions, not `0.0.0`, clean tree, `HEAD` tagged `vX.Y.Z`, npm auth, versions not already on the registry. Publishes every `@sukujs/*` package together (`workspace:*` rewritten to `X.Y.Z`).
 5. Do not use `npm publish` inside a single package directory.
 

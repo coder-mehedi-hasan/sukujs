@@ -1,36 +1,29 @@
-import {
-  route,
-  Routes,
-  scoped,
-  singleton,
-  Suku,
-  transient,
-} from "@sukujs/core";
-import { bunAdapter } from "@sukujs/platform-bun";
-import { CounterService } from "./services";
+import { Routes, route, Suku, scoped } from '@sukujs/core';
+import { bunAdapter } from '@sukujs/platform-bun';
+import { CounterService } from './services';
 
-@Routes("/products")
+@Routes('/products')
 class ProductRoute {
   constructor(private readonly counter: CounterService) {}
 
-  _1 = route.get("", {
+  _1 = route.get('', {
     handle: () => ({
       count: this.counter.increment(),
     }),
   });
 }
 
-@Routes("/users")
+@Routes('/users')
 class UsersRoute {
   constructor(private readonly counter: CounterService) {}
 
-  _1 = route.get("", {
+  _1 = route.get('', {
     handle: () => ({
       count: this.counter.increment(),
     }),
   });
 
-  _2 = route.get("/2", {
+  _2 = route.get('/2', {
     handle: () => ({
       count: this.counter.increment(),
     }),

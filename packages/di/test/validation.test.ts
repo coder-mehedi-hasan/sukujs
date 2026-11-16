@@ -47,9 +47,9 @@ describe('validateOnBuild', () => {
       constructor(public s: Scoped) {}
     }
     const c = new ServiceCollection().addScoped(Scoped).addSingleton(Single);
-    expect(() =>
-      c.build({ validateOnBuild: true, captiveDependencies: 'error' }),
-    ).toThrow(CaptiveDependencyError);
+    expect(() => c.build({ validateOnBuild: true, captiveDependencies: 'error' })).toThrow(
+      CaptiveDependencyError,
+    );
     expect(() => c.build({ validateOnBuild: true, validateScopes: false })).not.toThrow();
   });
 

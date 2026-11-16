@@ -14,7 +14,8 @@
       "!**/.source",
       "!**/.tanstack",
       "!**/.nitro",
-      "!**/routeTree.gen.ts"
+      "!**/routeTree.gen.ts",
+      "!examples/nest-app/**"
     ]
   },
   "formatter": {
