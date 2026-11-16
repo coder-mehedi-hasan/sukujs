@@ -1,0 +1,10 @@
+**/dist
+**/node_modules
+**/.output
+**/.source
+**/.tanstack
+**/.nitro
+**/routeTree.gen.ts
+examples/nest-app
+bun.lock
+coverage

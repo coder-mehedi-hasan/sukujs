@@ -45,5 +45,5 @@ const app = await Suku.create({ features: [UsersFeature], routes: [health], adap
 
 Classes that use constructor injection need `experimentalDecorators` and
 `emitDecoratorMetadata`, or a `static inject = [...]` array. Linter rules that rewrite imports
-to `import type` (Biome `useImportType`, ESLint `consistent-type-imports`) break constructor
+to `import type` (ESLint `consistent-type-imports`) break constructor
 injection and must be off.

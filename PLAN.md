@@ -250,7 +250,7 @@ suku/
 ```
 
 Tooling: Bun for workspace/test runner (`bun test` works on Node-targeted code too),
-`tsdown` for building ESM + CJS + `.d.ts`, Biome for lint and format, GitHub Actions
+`tsdown` for building ESM + CJS + `.d.ts`, ESLint + Prettier for lint and format, GitHub Actions
 running tests on Node 22 and Bun, size-limit check in CI against the 40 KB budget.
 
 ## 5. Phases
@@ -260,7 +260,7 @@ and can be built in parallel.
 
 ### Phase 0 — Bootstrap (half a day) — DONE 2026-11-08
 
-- Bun workspace, base tsconfig, Biome, tsdown build, `bun test`, CI workflow, size-limit.
+- Bun workspace, base tsconfig, ESLint + Prettier, tsdown build, `bun test`, CI workflow, size-limit.
 - Done when: `bun run build && bun test` is green on an empty package.
 
 ### Phase 1 — `@sukujs/di` (the heart, ~3 days) — DONE 2026-11-08 (43 tests, 12.5 KB minified)
