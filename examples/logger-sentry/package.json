@@ -1,0 +1,36 @@
+{
+  "name": "logger-sentry",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "suku dev",
+    "build": "suku build",
+    "start": "suku start",
+    "test": "bun test",
+    "typecheck": "tsc --noEmit",
+    "build:worker": "bun build src/worker.ts --target browser --format esm --outfile dist/worker.js",
+    "dev:worker": "wrangler dev",
+    "deploy:cloudflare": "wrangler deploy"
+  },
+  "suku": {
+    "runtime": "bun"
+  },
+  "dependencies": {
+    "@opentelemetry/api": "^1.9.0",
+    "@sentry/bun": "^11.0.0",
+    "@sukujs/core": "^0.3.0",
+    "@sukujs/platform-bun": "^0.3.0",
+    "@sukujs/security": "^0.3.0",
+    "pino": "^10.0.0",
+    "pino-pretty": "^13.0.0",
+    "zod": "^4.0.0"
+  },
+  "devDependencies": {
+    "@sukujs/cli": "^0.3.0",
+    "@types/bun": "latest",
+    "@types/node": "^22.0.0",
+    "typescript": "^5.9.0",
+    "wrangler": "^4.0.0"
+  }
+}
