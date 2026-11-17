@@ -1,4 +1,4 @@
 {
   "title": "Observability",
-  "pages": ["index", "grafana-cloud"]
+  "pages": ["index", "grafana-cloud", "sentry"]
 }

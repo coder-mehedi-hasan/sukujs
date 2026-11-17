@@ -2,7 +2,7 @@ import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { basename, join, resolve } from 'node:path';
 import { DEPLOY_TARGETS, type DeployTarget, parseDeployTargets } from './deploy.js';
 import { CliError } from './errors.js';
-import { OBSERVABILITY, type ObservabilityVendor, parseObservability } from './observability.js';
+import { parseObservability } from './observability.js';
 import { names } from './names.js';
 import { Plan } from './plan.js';
 import { loadProject, type Runtime } from './project.js';
@@ -37,7 +37,7 @@ export interface NewOptions {
   packageManager?: string;
   /** Deployment targets, as given on the command line: `['docker,pm2']`. */
   deploy?: string[];
-  /** `sentry` or `none`. */
+  /** `opentelemetry` (or `otel`), or `none`. */
   observability?: string;
   skipInstall?: boolean;
   skipGit?: boolean;
@@ -116,14 +116,14 @@ export async function newProject(
         ? parseObservability(
             await ask.select('Observability', [
               { value: 'none', label: 'None', hint: 'default' },
-              ...Object.entries(OBSERVABILITY).map(([value, { label, hint }]) => ({
-                value: value as ObservabilityVendor,
-                label,
-                hint,
-              })),
+              {
+                value: 'opentelemetry',
+                label: 'OpenTelemetry',
+                hint: 'errors, traces, logs and metrics to any OTLP endpoint',
+              },
             ]),
           )
-        : undefined;
+        : false;
 
   const git =
     options.skipGit === undefined && ask
@@ -141,7 +141,7 @@ export async function newProject(
     version: cliVersion(),
     packageManager: manager,
     deploy,
-    ...(observability ? { observability } : {}),
+    observability,
   });
   for (const [path, content] of Object.entries(files)) plan.create(path, content);
   if (ask) io.log('');

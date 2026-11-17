@@ -8,6 +8,6 @@ export class HelloRoutes {
 
   greet = route.get('/:name', {
     params: z.object({ name: z.string().min(1).max(50) }),
-    handle: ({ params }) => ({ message: this.hello.greet(params.name) }),
+    handle: async ({ params }) => ({ message: await this.hello.greet(params.name) }),
   });
 }

@@ -1,44 +1,26 @@
 ---
 title: Observability
-description: Errors, request traces, logs and runtime metrics sent to Sentry or to any OpenTelemetry vendor, behind a layer that is not tied to either.
+description: Errors, request traces, logs and runtime metrics sent with OpenTelemetry to any vendor that accepts it.
 icon: Activity
 ---
 
 Observability means being able to see what your app is doing in production: which errors
 happen, which requests are slow and why, and what the logs said at the time.
 
+Suku does this with [OpenTelemetry](https://opentelemetry.io), the open standard for sending
+that data. It works like an S3 client: one piece of code, and any service that speaks the
+protocol accepts it. You choose where the data goes by setting an address, not by installing
+that vendor's SDK.
+
 Suku does not ship this as a package. The CLI writes it into your project as ordinary code
 you own, the same way it does for [logging](/docs/logging#pino-and-opentelemetry).
-
-## Pick a vendor
-
-There are two drivers. **Sentry** has its own SDK. Everything else speaks **OpenTelemetry**'s
-protocol (OTLP), so one driver serves all of them and the vendor you pick only decides the
-example values written to `.env.example`.
-
-| Vendor                         | `--observability`           | Driver        | Notes                                                               |
-| ------------------------------ | --------------------------- | ------------- | ------------------------------------------------------------------- |
-| Sentry                         | `sentry`                    | Sentry        | Also self-hosted Sentry.                                            |
-| GlitchTip                      | `glitchtip`                 | Sentry        | Open source. Uses the Sentry SDK with its own DSN.                  |
-| Any OTLP endpoint or collector | `opentelemetry` (or `otel`) | OpenTelemetry |                                                                     |
-| Grafana Cloud                  | `grafana`                   | OpenTelemetry | [Step-by-step guide](/docs/observability/grafana-cloud).            |
-| Honeycomb                      | `honeycomb`                 | OpenTelemetry |                                                                     |
-| SigNoz                         | `signoz`                    | OpenTelemetry | Cloud or self-hosted.                                               |
-| Jaeger                         | `jaeger`                    | OpenTelemetry | Traces only: logs and metrics are switched off.                     |
-| Axiom                          | `axiom`                     | OpenTelemetry | Metrics are switched off: Axiom takes them in a separate dataset.   |
-| New Relic                      | `newrelic`                  | OpenTelemetry |                                                                     |
-| Datadog                        | `datadog`                   | OpenTelemetry | Through the Datadog Agent on the same host, with OTLP ingestion on. |
-
-Datadog and New Relic also have their own agents. Those work by changing libraries as they
-load, which does not work in the single file `suku build` produces, so they are reached
-through OpenTelemetry here.
 
 ## Add it
 
 To a new project:
 
 ```bash
-suku new my-api --observability sentry
+suku new my-api --observability otel
 ```
 
 In a terminal, `suku new` also asks. The default is none.
@@ -46,51 +28,56 @@ In a terminal, `suku new` also asks. The default is none.
 To a project you already have:
 
 ```bash
-suku generate observability honeycomb
+suku generate observability
 bun install
 ```
 
-Both give the same result. Then set the variables from `.env.example` where the app runs.
-**Without them nothing is sent and the SDK is never started**, which is how development and
-tests run.
+Both give the same result.
 
-<Tabs items={['Sentry', 'OpenTelemetry (Honeycomb shown)', 'Grafana Cloud']}>
-  <Tab value="Sentry">
-    ```bash title=".env.example"
-    # Sentry is off until SENTRY_DSN is set.
-    SENTRY_DSN=
-    SENTRY_ENVIRONMENT=production
-    ```
-  </Tab>
-  <Tab value="OpenTelemetry (Honeycomb shown)">
-    ```bash title=".env.example"
-    # Honeycomb is off until OTEL_EXPORTER_OTLP_ENDPOINT is set.
-    # EU accounts use https://api.eu1.honeycomb.io.
-    # OTEL_EXPORTER_OTLP_ENDPOINT=https://api.honeycomb.io
-    # OTEL_EXPORTER_OTLP_HEADERS=x-honeycomb-team=<api key>
-    OTEL_SERVICE_NAME=my-api
-    APP_ENV=production
-    ```
-  </Tab>
-  <Tab value="Grafana Cloud">
-    ```bash title=".env.example"
-    # Grafana Cloud is off until OTEL_EXPORTER_OTLP_ENDPOINT is set.
-    # OTEL_EXPORTER_OTLP_ENDPOINT=https://otlp-gateway-<zone>.grafana.net/otlp
-    # OTEL_EXPORTER_OTLP_HEADERS=Authorization=Basic%20<base64 of instance-id:token>
-    OTEL_SERVICE_NAME=my-api
-    APP_ENV=production
-    ```
-  </Tab>
-</Tabs>
+## Choose where it goes
 
-For OpenTelemetry, remove the `#` and fill in the values. `OTEL_EXPORTER_OTLP_HEADERS` is
-where the API key goes, as `name=value` pairs separated by commas. Write a space inside a
-value as `%20`, as in `Authorization=Bearer%20<token>`.
+Set the endpoint where the app runs. **Without it nothing is sent and OpenTelemetry is never
+started**, which is how development and tests run.
 
-<Callout title="Check the values with your vendor">
-  The endpoints and header names in `.env.example` are examples. Regions and plans differ, so copy
-  the exact values from your vendor's OpenTelemetry page.
-</Callout>
+```bash title=".env.example"
+# Observability is off until OTEL_EXPORTER_OTLP_ENDPOINT is set. Any OTLP endpoint works:
+# a collector on this machine, or a vendor. The API key, if any, goes in the headers.
+# OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318
+# OTEL_EXPORTER_OTLP_HEADERS=name=value,other=value
+# OTEL_RESOURCE_ATTRIBUTES=deployment.environment.name=production
+OTEL_SERVICE_NAME=my-api
+```
+
+| Variable                      | What it is                                                               |
+| ----------------------------- | ------------------------------------------------------------------------ |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | The address to send to: a collector, or a vendor. This is the on switch. |
+| `OTEL_EXPORTER_OTLP_HEADERS`  | The API key, as `name=value` pairs separated by commas.                  |
+| `OTEL_SERVICE_NAME`           | The name your app is listed under.                                       |
+| `OTEL_RESOURCE_ATTRIBUTES`    | Extra labels on everything sent, such as the environment.                |
+| `OTEL_TRACES_SAMPLER_ARG`     | The share of requests traced, from `0` to `1`. Default `0.1`.            |
+| `OTEL_LOGS_EXPORTER=none`     | Do not send logs, for a vendor that takes none.                          |
+| `OTEL_METRICS_EXPORTER=none`  | Do not send metrics, for a vendor that takes none.                       |
+
+These are OpenTelemetry's own variable names, so a vendor's setup page can usually be followed
+as written.
+
+### Vendor guides
+
+| Vendor        | Guide                                             | Notes                                                                                                                                  |
+| ------------- | ------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
+| Grafana Cloud | [Step by step](/docs/observability/grafana-cloud) |                                                                                                                                        |
+| Sentry        | [Step by step](/docs/observability/sentry)        | Traces and logs. Set `OTEL_METRICS_EXPORTER=none`.                                                                                     |
+| Honeycomb     |                                                   | Endpoint `https://api.honeycomb.io`, header `x-honeycomb-team=<api key>`.                                                              |
+| SigNoz        |                                                   | Endpoint `https://ingest.<region>.signoz.cloud:443`, header `signoz-ingestion-key=<key>`.                                              |
+| New Relic     |                                                   | Endpoint `https://otlp.nr-data.net`, header `api-key=<license key>`.                                                                   |
+| Axiom         |                                                   | Endpoint `https://api.axiom.co`, headers `Authorization=Bearer%20<token>,X-Axiom-Dataset=<dataset>`. Set `OTEL_METRICS_EXPORTER=none`. |
+| Jaeger        |                                                   | Endpoint `http://localhost:4318`. Traces only: set both `none` variables.                                                              |
+| Datadog       |                                                   | Endpoint `http://localhost:4318`, the Datadog Agent on the same host with OTLP ingestion on.                                           |
+| A collector   |                                                   | Endpoint `http://localhost:4318`. The collector holds the keys and forwards the data.                                                  |
+
+The values without a guide come from each vendor's documentation and have not been run
+against the vendor. Regions and plans differ, so copy the exact values from your vendor's
+OpenTelemetry page.
 
 ## What gets sent
 
@@ -100,13 +87,16 @@ value as `%20`, as in `Authorization=Bearer%20<token>`.
 | Traces  | One trace per request, named after the route: `GET /users/:id` | The `Observability` middleware |
 | Spans   | The time spent in a method you marked                          | `@Traced()`                    |
 | Logs    | Every line your `Logger` writes                                | One line in `src/logger.ts`    |
-| Runtime | Memory, CPU time, uptime and event-loop delay                  | The driver                     |
+| Runtime | Memory, CPU time, uptime and event-loop delay                  | `src/observability/init.ts`    |
 
 A `404`, a `400` or any other [`HttpException`](/docs/errors) is an answer your app chose to
 give, so it is not reported as an error.
 
 When a request arrives as part of a trace another service started (a `traceparent` header),
 the trace continues: your spans join the caller's.
+
+The JSON logs on stdout carry the same `trace_id` and `span_id` the vendor shows, so a line
+in your terminal or log file can be matched to its trace.
 
 ## What the CLI adds
 
@@ -115,19 +105,14 @@ src/
   instrument.ts                    # the settings; main.ts imports it first
   observability/
     index.ts                       # what your code imports
-    init.ts                        # starts the vendor
-    telemetry.ts                   # picks the driver; exports `telemetry`
+    init.ts                        # starts OpenTelemetry
+    telemetry.ts                   # `telemetry`: logs, errors, spans
     observability.types.ts         # ObservabilityOptions, Telemetry
     observability.middleware.ts    # Observability, reportError
     traced.decorator.ts            # @Traced()
-    drivers/
-      sentry/  or  otel/           # the only folder that imports a vendor's SDK
-        init.ts
-        driver.ts
 ```
 
-The SDK goes into your `package.json`: `@sentry/node` (`@sentry/bun` when the project's
-runtime is Bun), or the `@opentelemetry/*` packages.
+The `@opentelemetry/*` packages go into your `package.json`.
 
 It also edits three existing files. In `src/main.ts`, the import, the middleware and the
 error handler:
@@ -166,9 +151,9 @@ log(level: LogLevel, message: string, meta?: Record<string, unknown>): void {
 And the variables in `.env.example`.
 
 <Callout type="warn" title="Two things that must stay first">
-  `import './instrument'` must stay the first line of `src/main.ts`, so the SDK is running before
-  the server starts. `Observability` must stay the first middleware, so everything else, including
-  the request log, happens inside the trace.
+  `import './instrument'` must stay the first line of `src/main.ts`, so OpenTelemetry is running
+  before the server starts. `Observability` must stay the first middleware, so everything else,
+  including the request log, happens inside the trace.
 </Callout>
 
 If the generator cannot make one of these edits safely, for example because your `main.ts`
@@ -176,66 +161,45 @@ already has an `onError`, it changes nothing there and prints a note that says w
 
 ## Settings
 
-Everything you are likely to change is in one file.
+The variables above cover most needs. The rest is in one file.
 
-<Tabs items={['Sentry', 'OpenTelemetry']}>
-  <Tab value="Sentry">
-    ```ts title="src/instrument.ts"
-    // Starts error and performance reporting. `main.ts` imports this file first, before anything
-    // else loads, and it must stay that way.
-    import { initObservability } from './observability/init';
+```ts title="src/instrument.ts"
+// Starts tracing, log shipping and metrics. `main.ts` imports this file first, before anything
+// else loads, and it must stay that way.
+import { initObservability } from './observability/init';
 
-    initObservability({
-      dsn: process.env.SENTRY_DSN,
-      // On only when a DSN is set, so development and tests send nothing.
-      enabled: Boolean(process.env.SENTRY_DSN),
-      environment: process.env.SENTRY_ENVIRONMENT,
-      // One request in ten is traced. Errors are always reported.
-      traceSampleRate: 0.1,
-      // A request with this header set to "1" is always traced, which helps when debugging.
-      forceTraceHeader: 'x-app-trace',
-    });
-    ```
+// Everything is set with OpenTelemetry's standard variables, so any OTLP endpoint works: a
+// collector, or a vendor. An API key goes in OTEL_EXPORTER_OTLP_HEADERS, which the exporters
+// read themselves.
+const endpoint = process.env.OTEL_EXPORTER_OTLP_ENDPOINT;
 
-  </Tab>
-  <Tab value="OpenTelemetry">
-    ```ts title="src/instrument.ts"
-    // Starts tracing, log shipping and metrics. `main.ts` imports this file first, before anything
-    // else loads, and it must stay that way.
-    import { initObservability } from './observability/init';
+initObservability({
+  endpoint,
+  // On only when an endpoint is set, so development and tests send nothing.
+  enabled: Boolean(endpoint),
+  serviceName: process.env.OTEL_SERVICE_NAME ?? 'my-api',
+  // One request in ten is traced, unless OTEL_TRACES_SAMPLER_ARG says otherwise. Errors and
+  // logs are always sent.
+  traceSampleRate: Number(process.env.OTEL_TRACES_SAMPLER_ARG ?? 0.1),
+  // A request with this header set to "1" is always traced, which helps when debugging.
+  forceTraceHeader: 'x-app-trace',
+  // Some vendors take no logs or no metrics. Set the variable to "none" for those.
+  logs: process.env.OTEL_LOGS_EXPORTER !== 'none',
+  runtimeMetrics: process.env.OTEL_METRICS_EXPORTER !== 'none',
+});
+```
 
-    // A collector, or your vendor's OTLP endpoint. An API key goes in OTEL_EXPORTER_OTLP_HEADERS,
-    // which the exporters read themselves.
-    const endpoint = process.env.OTEL_EXPORTER_OTLP_ENDPOINT;
-
-    initObservability({
-      dsn: endpoint,
-      // On only when an endpoint is set, so development and tests send nothing.
-      enabled: Boolean(endpoint),
-      serviceName: process.env.OTEL_SERVICE_NAME ?? 'my-api',
-      environment: process.env.APP_ENV,
-      // One request in ten is traced. Errors are always reported.
-      traceSampleRate: 0.1,
-      // A request with this header set to "1" is always traced, which helps when debugging.
-      forceTraceHeader: 'x-app-trace',
-    });
-    ```
-
-  </Tab>
-</Tabs>
-
-| Option             | What it does                                                                    |
-| ------------------ | ------------------------------------------------------------------------------- |
-| `dsn`              | Where the data goes: a Sentry DSN, or an OTLP endpoint.                         |
-| `enabled`          | Off means the SDK is not started at all.                                        |
-| `serviceName`      | The name your app is listed under. OpenTelemetry only.                          |
-| `environment`      | `production`, `staging` and so on. Shown next to every error and trace.         |
-| `traceSampleRate`  | The share of requests that are traced, from `0` to `1`. Errors are always sent. |
-| `forceTraceHeader` | A request with this header set to `1` is always traced.                         |
-| `ignoreTraces`     | Names of traces that are never sent, as regular expressions.                    |
-| `ignoreError`      | Return `true` for an error that should not be reported.                         |
-| `logs`             | `false` stops sending log lines. Default `true`.                                |
-| `runtimeMetrics`   | `false` stops sending memory and CPU figures. Default `true`.                   |
+| Option             | What it does                                                                             |
+| ------------------ | ---------------------------------------------------------------------------------------- |
+| `endpoint`         | Where the data goes.                                                                     |
+| `enabled`          | Off means OpenTelemetry is not started at all.                                           |
+| `serviceName`      | The name your app is listed under.                                                       |
+| `traceSampleRate`  | The share of requests that are traced, from `0` to `1`. Errors and logs are always sent. |
+| `forceTraceHeader` | A request with this header set to `1` is always traced.                                  |
+| `ignoreTraces`     | Names of traces that are never sent, as regular expressions.                             |
+| `ignoreError`      | Return `true` for an error that should not be reported.                                  |
+| `logs`             | `false` stops sending log lines.                                                         |
+| `runtimeMetrics`   | `false` stops sending memory and CPU figures.                                            |
 
 Tracing every request costs quota, so only one in ten is traced by default. When you are
 chasing one slow request, send the header and that request is traced for certain:
@@ -247,12 +211,12 @@ curl -H 'x-app-trace: 1' https://api.example.com/users/42
 <Callout type="warn" title="Do not use NODE_ENV here">
   `suku build` replaces `process.env.NODE_ENV` with a fixed value while it bundles, so a check such
   as `enabled: process.env.NODE_ENV === 'production'` is decided at build time, not when the app
-  starts. That is why the switch is the DSN or the endpoint.
+  starts. That is why the switch is the endpoint.
 </Callout>
 
 ## Use it in your code
 
-Import from `./observability`, never from a vendor's package.
+Import from `./observability`, never from `@opentelemetry/*`.
 
 **Time a method.** `@Traced()` records a span named `Class.method` inside the trace of the
 request that called it.
@@ -308,40 +272,16 @@ when the app closes. That is when it sends whatever is still waiting. The starte
 
 ## Limits
 
-For both drivers:
-
-- **Database and HTTP client calls are not traced automatically.** Vendors do that by changing
+- **Database and HTTP client calls are not traced automatically.** That is done by changing
   those libraries as they load, which does not work in the single file `suku build` produces.
   Use `@Traced()` or `telemetry.startSpan` around the calls you care about.
-- **The Cloudflare Workers and Vercel entry points are not wired.** `suku new` sets this up
-  in `src/main.ts` only.
-
-With Sentry:
-
-- **On Bun, Sentry prints one warning at start** about library patching. Errors, traces, logs
-  and `@Traced()` still work.
-- **A Node project under `suku dev` sends no request traces**, because `suku dev` runs it with
-  Bun and the Node SDK cannot see Bun's server. Errors and logs still arrive. The built app
-  on Node traces normally.
-- **The JSON logs on stdout do not carry Sentry's trace ids.** The copies sent to Sentry are
-  linked to their trace.
-
-With OpenTelemetry:
-
 - **Errors arrive as an exception on their span and as an error log**, not in an inbox of
   their own. Whether you get grouping and alerts for them depends on the vendor.
 - **An unhandled error produces two error log lines**: the report itself, with the stack, and
   the line your `Logger` writes for it.
-- **The JSON logs on stdout do carry the trace ids** (`trace_id`, `span_id`), the same ones
-  the vendor shows.
-
-## Another vendor
-
-Your code only knows the `Telemetry` interface, so changing vendor does not touch it.
-
-- **To another OpenTelemetry vendor:** change the variables. No code changes.
-- **Between Sentry and OpenTelemetry:** delete `src/observability` and `src/instrument.ts`,
-  then run `suku generate observability <vendor>` again.
-- **To a vendor with its own SDK:** add `src/observability/drivers/<vendor>/` with an
-  `init.ts` and a `driver.ts` that implements `Telemetry`, and point `init.ts` and
-  `telemetry.ts` at it.
+- **Nothing is printed when sending fails.** A wrong endpoint or key looks the same as no
+  data.
+- **The Cloudflare Workers and Vercel entry points are not wired.** `suku new` sets this up
+  in `src/main.ts` only.
+- **Vendor agents are not supported**, such as Sentry's SDK, `dd-trace` or the New Relic
+  agent. Use the vendor's OpenTelemetry endpoint.

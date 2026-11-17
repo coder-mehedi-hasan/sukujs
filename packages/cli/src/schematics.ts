@@ -24,7 +24,7 @@ export const SCHEMATICS = {
   resource: { alias: 'res', description: 'A CRUD feature: routes, service, schemas and a test' },
   observability: {
     alias: 'obs',
-    description: 'Errors, traces and logs sent to Sentry or an OpenTelemetry vendor',
+    description: 'Errors, traces, logs and metrics sent with OpenTelemetry',
   },
 } as const;
 
@@ -344,21 +344,19 @@ export function generate(
       return;
     }
     case 'observability': {
-      // The name is the vendor: `suku generate observability sentry`.
-      const vendor = parseObservability(input);
-      if (!vendor) throw new CliError('Name a vendor: suku generate observability sentry');
-      addObservability(
-        {
-          ...project,
-          read: (path) => plan.read(path),
-          create: (path, content) => plan.create(path, content),
-          update: (path, content) => plan.update(path, content),
-          note: (message) => plan.note(message),
-        },
-        vendor,
-      );
+      // There is one kind, so the name is optional: `suku generate observability`.
+      if (!parseObservability(input)) {
+        throw new CliError('Usage: suku generate observability');
+      }
+      addObservability({
+        ...project,
+        read: (path) => plan.read(path),
+        create: (path, content) => plan.create(path, content),
+        update: (path, content) => plan.update(path, content),
+        note: (message) => plan.note(message),
+      });
       plan.note(
-        'Install the new dependencies, then set the variables added to .env.example where the app runs. Nothing is sent without them.',
+        'Install the new dependencies, then set OTEL_EXPORTER_OTLP_ENDPOINT where the app runs. Nothing is sent without it.',
       );
       return;
     }

@@ -1,5 +1,4 @@
 import {
-  context,
   propagation,
   ROOT_CONTEXT,
   type Span,

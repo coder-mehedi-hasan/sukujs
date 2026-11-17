@@ -1,5 +1,5 @@
 import { type DeployTarget, deployFiles } from './deploy.js';
-import { addObservability, OBSERVABILITY, type ObservabilityVendor } from './observability.js';
+import { addObservability } from './observability.js';
 import type { Runtime } from './project.js';
 
 export interface StarterOptions {
@@ -12,8 +12,8 @@ export interface StarterOptions {
   packageManager?: string;
   /** Deployment targets to add files for. */
   deploy?: DeployTarget[];
-  /** Where errors, traces and logs are sent. Default: nowhere. */
-  observability?: ObservabilityVendor;
+  /** Send errors, traces, logs and metrics with OpenTelemetry. Default: no. */
+  observability?: boolean;
 }
 
 /** The files of a new project, keyed by path. */
@@ -310,32 +310,26 @@ test('GET /hello/:name', async () => {
   };
   const all = { ...files, ...extra.files };
   if (options.observability) {
-    const vendor = options.observability;
-    addObservability(
-      {
-        runtime,
-        sourceRoot: 'src',
-        entry: 'src/main.ts',
-        importExtension: '',
-        read: (path) => all[path],
-        create: (path, content) => void (all[path] = content),
-        update: (path, content) => void (all[path] = content),
-        // Every edit applies to the starter's own files, so there is nothing to report.
-        note: () => undefined,
-      },
-      vendor,
-    );
-    const { label, driver } = OBSERVABILITY[vendor];
-    const variable = driver === 'sentry' ? 'SENTRY_DSN' : 'OTEL_EXPORTER_OTLP_ENDPOINT';
+    addObservability({
+      sourceRoot: 'src',
+      entry: 'src/main.ts',
+      importExtension: '',
+      read: (path) => all[path],
+      create: (path, content) => void (all[path] = content),
+      update: (path, content) => void (all[path] = content),
+      // Every edit applies to the starter's own files, so there is nothing to report.
+      note: () => undefined,
+    });
     all['README.md'] += `
 ## Observability
 
-Errors, request traces, logs and runtime metrics go to ${label} once \`${variable}\` is
-set. Without it nothing is sent, which is how development and tests run. \`.env.example\` shows
-the values.
+Errors, request traces, logs and runtime metrics are sent with OpenTelemetry once
+\`OTEL_EXPORTER_OTLP_ENDPOINT\` is set. Any OTLP endpoint works: a collector, Grafana Cloud,
+Sentry, Honeycomb and others. Without it nothing is sent, which is how development and tests
+run. \`.env.example\` lists the variables.
 
 - \`src/instrument.ts\` holds the settings: the sample rate and the header that forces a trace.
-- \`src/observability/\` is a vendor-neutral layer. Only \`drivers/\` imports a vendor's SDK.
+- \`src/observability/\` is the code. Your own code imports \`telemetry\` and \`Traced\` from it.
 - \`@Traced()\` on a method records a span for it. \`telemetry.captureException(error)\`
   reports an error you handled yourself.
 `;

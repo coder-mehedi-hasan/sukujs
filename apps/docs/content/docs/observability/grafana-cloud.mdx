@@ -4,7 +4,7 @@ description: Send a Suku app's logs, traces and metrics to Grafana Cloud, step b
 ---
 
 This guide takes a Suku project from nothing to its logs showing in Grafana Cloud. It uses
-the OpenTelemetry driver described in [observability](/docs/observability). You need a
+the OpenTelemetry setup described in [observability](/docs/observability). You need a
 Grafana Cloud account; the free plan is enough.
 
 ## 1. Add observability to the project
@@ -12,13 +12,13 @@ Grafana Cloud account; the free plan is enough.
 A new project:
 
 ```bash
-suku new my-api --observability grafana
+suku new my-api --observability otel
 ```
 
 Or one you already have:
 
 ```bash
-suku generate observability grafana
+suku generate observability
 bun install
 ```
 

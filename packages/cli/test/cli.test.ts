@@ -8,7 +8,7 @@ import { addArrayToFeature, addImport, addToArray, prependToArray } from '../src
 
 const repo = resolve(import.meta.dir, '../../..');
 // Inside the repository, so generated projects resolve zod, pino, pino-pretty, @opentelemetry/api
-// and the Sentry SDKs from this package's devDependencies.
+// and the OpenTelemetry SDK from this package's devDependencies.
 const tmp = join(import.meta.dir, '.tmp', String(process.pid));
 mkdirSync(tmp, { recursive: true });
 afterAll(() => rmSync(join(import.meta.dir, '.tmp'), { recursive: true, force: true }));
@@ -155,7 +155,7 @@ describe('prompts', () => {
     const { prompter, keys } = session();
     const lines: string[] = [];
     const done = run(['new', '--dry-run'], { cwd: tmp, log: (line) => lines.push(line), prompter });
-    // name, runtime: Bun, package manager: bun, deploy: Docker + Vercel, observability: Sentry,
+    // name, runtime: Bun, package manager: bun, deploy: Docker + Vercel, observability: yes,
     // git: no, install: no
     await keys(
       'a',
@@ -184,7 +184,7 @@ describe('prompts', () => {
     expect(output).toContain('CREATE Dockerfile');
     expect(output).toContain('CREATE api/index.ts');
     expect(output).not.toContain('wrangler.jsonc');
-    expect(output).toContain('CREATE src/observability/drivers/sentry/driver.ts');
+    expect(output).toContain('CREATE src/observability/telemetry.ts');
     expect(existsSync(join(tmp, 'asked'))).toBe(false);
   });
 });
@@ -407,12 +407,12 @@ const collector = () => {
     async fetch(request) {
       // OTLP bodies are protobuf: the names and messages in them are still plain text.
       const body = Buffer.from(await request.arrayBuffer()).toString('latin1');
-      received += `${new URL(request.url).pathname} key=${request.headers.get('x-key')} ${body}\n`;
+      const { headers } = request;
+      received += `${new URL(request.url).pathname} key=${headers.get('x-key')} auth=${headers.get('x-auth')} ${body}\n`;
       return new Response('{}');
     },
   });
   return {
-    dsn: `http://key@127.0.0.1:${server.port}/1`,
     endpoint: `http://127.0.0.1:${server.port}`,
     received: () => received,
     stop: () => server.stop(true),
@@ -420,8 +420,8 @@ const collector = () => {
 };
 
 /** Adds a route that throws and a traced method, to have something to report. */
-const instrumented = async (name: string, vendor: string, ...flags: string[]) => {
-  const root = await project(name, '--observability', vendor, ...flags);
+const instrumented = async (name: string, ...flags: string[]) => {
+  const root = await project(name, '--observability', 'otel', ...flags);
   const feature = read(root, 'src/app.feature.ts');
   writeFileSync(
     join(root, 'src/app.feature.ts'),
@@ -486,12 +486,43 @@ const exercise = async (root: string, command: string[], env: Record<string, str
 };
 
 describe('observability', () => {
+  const stripped = (text: string) => text.replace(/[^\x21-\x7e]+/g, ' ');
+
+  /** What any OTLP endpoint must receive from the requests and the failure. */
+  const expectTelemetry = (received: string) => {
+    const text = stripped(received);
+    // Headers from OTEL_EXPORTER_OTLP_HEADERS: `%20` is a space, and a value may hold `=`.
+    expect(text).toContain('/v1/traces key=Bearer secret auth=sentry sentry_key=abc123');
+    expect(text).toContain('/v1/logs key=Bearer secret');
+    expect(text).toContain('service.name observed-app');
+    expect(text).toContain('deployment.environment.name staging');
+    // Traces named after the route, with the traced method inside.
+    expect(text).toContain('GET /hello/:name');
+    expect(text).toContain('HelloService.greet');
+    expect(text).toContain('http.route /hello/:name');
+    // The caller's trace id is kept, as raw bytes in the protobuf body.
+    const traceId = Buffer.from('0af7651916cd43dd8448eb211c80319c', 'hex').toString('latin1');
+    expect(received).toContain(traceId);
+    // The unhandled error, as an exception on its span and as a log record. Not the 404.
+    expect(text).toContain('GET /boom');
+    expect(text).toContain('exception.message kaboom');
+    expect(text).not.toContain('Cannot GET /nope');
+    expect(text).toContain('INFO* request');
+  };
+
+  const otlp = (endpoint: string) => ({
+    OTEL_EXPORTER_OTLP_ENDPOINT: endpoint,
+    OTEL_EXPORTER_OTLP_HEADERS: 'x-key=Bearer%20secret,x-auth=sentry sentry_key=abc123',
+    OTEL_RESOURCE_ATTRIBUTES: 'deployment.environment.name=staging',
+  });
+
   test('suku new with the flag and the generator afterwards give the same project', async () => {
-    const flagged = await project('flagged', '--observability', 'sentry');
+    const flagged = await project('flagged', '--observability', 'opentelemetry');
     const later = await project('later');
-    const generated = await cli(later, 'g', 'observability', 'sentry');
+    // One kind, so the generator needs no name.
+    const generated = await cli(later, 'g', 'observability');
     expect(generated.code).toBe(0);
-    expect(generated.output).toContain('CREATE src/observability/drivers/sentry/driver.ts');
+    expect(generated.output).toContain('CREATE src/observability/telemetry.ts');
     expect(generated.output).toContain('UPDATE src/main.ts');
     expect(generated.output).toContain('NOTE   Install the new dependencies');
     for (const file of [
@@ -499,12 +530,14 @@ describe('observability', () => {
       'src/logger.ts',
       'src/instrument.ts',
       'src/observability/index.ts',
-      'src/observability/drivers/sentry/init.ts',
-      '.env.example',
+      'src/observability/init.ts',
+      'src/observability/telemetry.ts',
     ]) {
-      expect(read(later, file)).toBe(read(flagged, file));
+      expect(read(later, file).replaceAll('later', 'flagged')).toBe(read(flagged, file));
     }
-    expect(JSON.parse(read(later, 'package.json')).dependencies['@sentry/node']).toBeDefined();
+    const dependencies = Object.keys(JSON.parse(read(later, 'package.json')).dependencies);
+    expect(dependencies).toContain('@opentelemetry/exporter-trace-otlp-proto');
+    expect(dependencies.join()).not.toContain('sentry');
 
     const main = read(flagged, 'src/main.ts');
     expect(main.startsWith("import './instrument';")).toBe(true);
@@ -512,25 +545,27 @@ describe('observability', () => {
     expect(main).toContain('middlewares: [Observability, requestLogger, securityHeaders()],');
     expect(main).toContain('onError: reportError,');
     expect(read(flagged, 'README.md')).toContain('## Observability');
+    expect(read(flagged, '.env.example')).toContain(
+      '# OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318',
+    );
+    expect(read(flagged, '.env.example')).toContain('OTEL_SERVICE_NAME=flagged');
     // A project without it has no trace of it.
-    expect(read(await project('plain'), 'package.json')).not.toContain('sentry');
+    expect(read(await project('plain'), 'package.json')).not.toContain('sdk-trace');
 
-    // Only the driver folder imports the vendor.
-    const vendorImports = sh(flagged, 'grep', '-rl', '@sentry/', 'src').output.trim().split('\n');
-    expect(vendorImports.sort()).toEqual([
-      'src/observability/drivers/sentry/driver.ts',
-      'src/observability/drivers/sentry/init.ts',
-    ]);
+    // Only two files import the OpenTelemetry SDK. App code uses the Telemetry interface.
+    const sdk = sh(flagged, 'grep', '-rlE', '@opentelemetry/(sdk|exporter)', 'src');
+    expect(sdk.output.trim()).toBe('src/observability/init.ts');
+    expect(read(flagged, 'src/observability/index.ts')).not.toContain('@opentelemetry');
 
-    const again = await cli(later, 'g', 'obs', 'sentry');
+    const again = await cli(later, 'g', 'obs', 'otel');
     expect(again.code).toBe(1);
     expect(again.output).toContain('Refusing to overwrite');
-    expect((await cli(later, 'g', 'observability', 'bogus')).output).toContain(
-      'Unknown observability vendor "bogus"',
-    );
-    expect((await cli(tmp, 'new', 'x', '--observability', 'bogus', '--yes')).output).toContain(
-      'Unknown observability vendor "bogus"',
-    );
+    // Vendors are not options: any of them is reached by setting the endpoint.
+    for (const vendor of ['sentry', 'grafana']) {
+      expect((await cli(tmp, 'new', 'x', '--observability', vendor, '--yes')).output).toContain(
+        `Unknown observability option "${vendor}"`,
+      );
+    }
   });
 
   test('the generator leaves a note for what it cannot edit safely', async () => {
@@ -540,7 +575,7 @@ describe('observability', () => {
       read(root, 'src/main.ts').replace('  adapter:', '  onError: () => undefined,\n  adapter:'),
     );
     writeFileSync(join(root, 'src/logger.ts'), '// replaced by the team\n');
-    const result = await cli(root, 'g', 'observability', 'sentry');
+    const result = await cli(root, 'g', 'observability', 'opentelemetry');
     expect(result.code).toBe(0);
     expect(result.output).toContain('already has an `onError`. Call `reportError(error, ctx)`');
     expect(result.output).toContain('call `telemetry.log(level, message, meta)` from your Logger');
@@ -550,155 +585,8 @@ describe('observability', () => {
     expect(read(root, 'src/logger.ts')).toBe('// replaced by the team\n');
   });
 
-  test('a built Node app reports errors, traces, spans and logs', async () => {
-    const root = await instrumented('observed', 'sentry');
-    expect(sh(root, 'bunx', 'tsc', '--noEmit', '-p', 'tsconfig.json').output).toBe('');
-    const tests = sh(root, 'bun', 'test');
-    expect(tests.code).toBe(0);
-    expect(sh(root, 'bun', join(repo, 'packages/cli/src/bin.ts'), 'build').code).toBe(0);
-
-    const sentry = collector();
-    try {
-      const { stderr } = await exercise(root, ['node', 'dist/main.js'], { SENTRY_DSN: sentry.dsn });
-      expect(stderr).toBe('');
-      const received = sentry.received();
-      // The unhandled error, but not the 404, which is an answer the app chose to give.
-      expect(received).toContain('"type":"Error","value":"kaboom"');
-      expect(received).not.toContain('Cannot GET /nope');
-      // The request's trace is named after the route, and holds the traced method.
-      expect(received).toContain('"name":"GET /hello/:name"');
-      expect(received).toContain('"name":"HelloService.greet"');
-      expect(received).toContain('"sentry.op":{"value":"http.server"');
-      // The logger's lines arrive as logs.
-      expect(received).toContain('"body":"request"');
-      expect(received).toContain('"body":"kaboom"');
-    } finally {
-      sentry.stop();
-    }
-
-    // Without a DSN the SDK never starts: nothing is sent and nothing is printed.
-    const idle = collector();
-    try {
-      const { stderr } = await exercise(root, ['node', 'dist/main.js'], {});
-      expect(stderr).toBe('');
-      expect(idle.received()).toBe('');
-    } finally {
-      idle.stop();
-    }
-  }, 120_000);
-
-  test('a Bun app reports the same through the Bun SDK', async () => {
-    const root = await instrumented('observed-bun', 'sentry', '--runtime', 'bun');
-    expect(JSON.parse(read(root, 'package.json')).dependencies['@sentry/bun']).toBeDefined();
-    expect(read(root, 'src/observability/drivers/sentry/init.ts')).toContain(
-      'Sentry.bunRuntimeMetricsIntegration()',
-    );
-    expect(sh(root, 'bunx', 'tsc', '--noEmit', '-p', 'tsconfig.json').output).toBe('');
-
-    const sentry = collector();
-    try {
-      await exercise(root, ['bun', 'src/main.ts'], { SENTRY_DSN: sentry.dsn });
-      const received = sentry.received();
-      expect(received).toContain('"type":"Error","value":"kaboom"');
-      expect(received).toContain('"name":"GET /hello/:name"');
-      expect(received).toContain('"name":"HelloService.greet"');
-      expect(received).toContain('"body":"request"');
-    } finally {
-      sentry.stop();
-    }
-  }, 120_000);
-});
-
-describe('observability through OpenTelemetry', () => {
-  const stripped = (text: string) => text.replace(/[^\x21-\x7e]+/g, ' ');
-
-  /** What every OpenTelemetry vendor must receive from the two requests and the failure. */
-  const expectTelemetry = (received: string) => {
-    const text = stripped(received);
-    // All three signals, with the API key from OTEL_EXPORTER_OTLP_HEADERS decoded.
-    expect(text).toContain('/v1/traces key=Bearer secret');
-    expect(text).toContain('/v1/logs key=Bearer secret');
-    expect(text).toContain('/v1/metrics key=Bearer secret');
-    expect(text).toContain('service.name observed-app');
-    // Traces named after the route, with the traced method inside.
-    expect(text).toContain('GET /hello/:name');
-    expect(text).toContain('HelloService.greet');
-    expect(text).toContain('http.route /hello/:name');
-    // The caller's trace id is kept, as raw bytes in the protobuf body.
-    const traceId = Buffer.from('0af7651916cd43dd8448eb211c80319c', 'hex').toString('latin1');
-    expect(received).toContain(traceId);
-    // The unhandled error, as an exception on its span and as a log record.
-    expect(text).toContain('GET /boom');
-    expect(text).toContain('exception.message kaboom');
-    expect(text).not.toContain('Cannot GET /nope');
-    // The logger's lines and the runtime figures.
-    expect(text).toContain('INFO* request');
-    expect(text).toContain('process.memory.usage');
-    expect(text).toContain('nodejs.eventloop.delay.p99');
-  };
-
-  test('every vendor is a preset of one of two drivers', async () => {
-    const env = async (vendor: string) => {
-      const root = await project(`preset-${vendor}`, '--observability', vendor);
-      return {
-        root,
-        env: read(root, '.env.example'),
-        instrument: read(root, 'src/instrument.ts'),
-        dependencies: Object.keys(JSON.parse(read(root, 'package.json')).dependencies),
-      };
-    };
-
-    const glitchtip = await env('glitchtip');
-    expect(glitchtip.env).toContain('# GlitchTip is off until SENTRY_DSN is set.');
-    expect(glitchtip.dependencies).toContain('@sentry/node');
-    expect(existsSync(join(glitchtip.root, 'src/observability/drivers/sentry/driver.ts'))).toBe(
-      true,
-    );
-
-    const grafana = await env('grafana');
-    expect(grafana.env).toContain(
-      '# OTEL_EXPORTER_OTLP_ENDPOINT=https://otlp-gateway-<zone>.grafana.net/otlp',
-    );
-    expect(grafana.env).toContain(
-      '# OTEL_EXPORTER_OTLP_HEADERS=Authorization=Basic%20<base64 of instance-id:token>',
-    );
-    expect(grafana.env).toContain('OTEL_SERVICE_NAME=preset-grafana');
-    expect(grafana.instrument).toContain("?? 'preset-grafana'");
-    expect(grafana.dependencies).toContain('@opentelemetry/exporter-trace-otlp-proto');
-    expect(grafana.dependencies.join()).not.toContain('sentry');
-    expect(existsSync(join(grafana.root, 'src/observability/drivers/sentry'))).toBe(false);
-    // The same driver for all of them: only the example values differ.
-    for (const vendor of ['honeycomb', 'signoz', 'newrelic', 'datadog', 'opentelemetry']) {
-      const other = await env(vendor);
-      expect(read(other.root, 'src/observability/drivers/otel/driver.ts')).toBe(
-        read(grafana.root, 'src/observability/drivers/otel/driver.ts'),
-      );
-      expect(other.env).toContain('# OTEL_EXPORTER_OTLP_ENDPOINT=');
-    }
-    expect(read(join(tmp, 'preset-honeycomb'), '.env.example')).toContain(
-      '# OTEL_EXPORTER_OTLP_HEADERS=x-honeycomb-team=<api key>',
-    );
-
-    // Signals a vendor does not take are switched off in the settings.
-    const jaeger = await env('jaeger');
-    expect(jaeger.instrument).toContain('logs: false,');
-    expect(jaeger.instrument).toContain('runtimeMetrics: false,');
-    const axiom = await env('axiom');
-    expect(axiom.instrument).toContain('runtimeMetrics: false,');
-    expect(axiom.instrument).not.toContain('logs: false,');
-    expect(grafana.instrument).not.toContain('false');
-
-    // `otel` is short for `opentelemetry`, and the generator gives the same project.
-    const later = await project('later-otel');
-    expect((await cli(later, 'g', 'observability', 'otel')).code).toBe(0);
-    const flagged = await project('flagged-otel', '--observability', 'opentelemetry');
-    for (const file of ['src/main.ts', 'src/logger.ts', 'src/observability/drivers/otel/init.ts']) {
-      expect(read(later, file)).toBe(read(flagged, file));
-    }
-  }, 60_000);
-
   test('a built Node app sends traces, logs, errors and metrics over OTLP', async () => {
-    const root = await instrumented('observed-app', 'honeycomb');
+    const root = await instrumented('observed-app');
     expect(sh(root, 'bunx', 'tsc', '--noEmit', '-p', 'tsconfig.json').output).toBe('');
     expect(sh(root, 'bun', 'test').code).toBe(0);
     expect(sh(root, 'bun', join(repo, 'packages/cli/src/bin.ts'), 'build').code).toBe(0);
@@ -706,17 +594,21 @@ describe('observability through OpenTelemetry', () => {
     const backend = collector();
     try {
       const { stderr, stdout } = await exercise(root, ['node', 'dist/main.js'], {
-        OTEL_EXPORTER_OTLP_ENDPOINT: backend.endpoint,
-        OTEL_EXPORTER_OTLP_HEADERS: 'x-key=Bearer%20secret',
+        ...otlp(backend.endpoint),
       });
       expect(stderr).toBe('');
       expectTelemetry(backend.received());
+      const text = stripped(backend.received());
+      expect(text).toContain('/v1/metrics key=Bearer secret');
+      expect(text).toContain('process.memory.usage');
+      expect(text).toContain('nodejs.eventloop.delay.p99');
       // The JSON lines on stdout carry the same trace id, so they can be matched to the trace.
       expect(stdout).toContain('"trace_id":"0af7651916cd43dd8448eb211c80319c"');
     } finally {
       backend.stop();
     }
 
+    // Without an endpoint the SDK never starts: nothing is sent and nothing is printed.
     const idle = collector();
     try {
       const { stderr, stdout } = await exercise(root, ['node', 'dist/main.js'], {});
@@ -728,19 +620,33 @@ describe('observability through OpenTelemetry', () => {
     }
   }, 120_000);
 
-  test('a Bun app sends the same', async () => {
-    const root = await instrumented('observed-app', 'opentelemetry', '--runtime', 'bun', '--force');
+  test('a Bun app sends the same, and signals can be switched off', async () => {
+    const root = await instrumented('observed-app', '--runtime', 'bun', '--force');
     expect(sh(root, 'bunx', 'tsc', '--noEmit', '-p', 'tsconfig.json').output).toBe('');
     const backend = collector();
     try {
-      const { stderr } = await exercise(root, ['bun', 'src/main.ts'], {
-        OTEL_EXPORTER_OTLP_ENDPOINT: backend.endpoint,
-        OTEL_EXPORTER_OTLP_HEADERS: 'x-key=Bearer%20secret',
-      });
+      const { stderr } = await exercise(root, ['bun', 'src/main.ts'], otlp(backend.endpoint));
       expect(stderr).toBe('');
       expectTelemetry(backend.received());
+      expect(stripped(backend.received())).toContain('/v1/metrics');
     } finally {
       backend.stop();
+    }
+
+    // For a vendor that takes traces only.
+    const tracesOnly = collector();
+    try {
+      await exercise(root, ['bun', 'src/main.ts'], {
+        ...otlp(tracesOnly.endpoint),
+        OTEL_LOGS_EXPORTER: 'none',
+        OTEL_METRICS_EXPORTER: 'none',
+      });
+      const text = stripped(tracesOnly.received());
+      expect(text).toContain('/v1/traces');
+      expect(text).not.toContain('/v1/logs');
+      expect(text).not.toContain('/v1/metrics');
+    } finally {
+      tracesOnly.stop();
     }
   }, 120_000);
 });

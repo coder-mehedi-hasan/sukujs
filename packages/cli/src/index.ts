@@ -43,8 +43,7 @@ Options for new (in a terminal, anything you leave out is asked):
   --package-manager <name>      bun, npm, pnpm or yarn (default: bun)
   --deploy <targets>            docker, pm2, systemd, cloudflare, vercel or none
                                 (comma-separated or repeated)
-  --observability <vendor>      sentry, glitchtip, opentelemetry, grafana, honeycomb, signoz,
-                                jaeger, axiom, newrelic, datadog or none (default: none)
+  --observability <kind>        opentelemetry (or otel), or none (default: none)
   --skip-install                Do not install dependencies
   --skip-git                    Do not run git init
   -y, --yes                     Ask nothing, use the defaults
@@ -158,8 +157,10 @@ export async function run(argv: string[], io: Partial<Io> = {}): Promise<number>
       }
       case 'generate':
       case 'g': {
-        if (!first || !second) throw new CliError('Usage: suku generate <schematic> <name>');
-        return generateCommand(out, first, second, {
+        // Observability has one kind, so it needs no name.
+        const name = second ?? (first === 'observability' || first === 'obs' ? 'otel' : undefined);
+        if (!first || !name) throw new CliError('Usage: suku generate <schematic> <name>');
+        return generateCommand(out, first, name, {
           ...write,
           ...defined({
             classless: values.classless,

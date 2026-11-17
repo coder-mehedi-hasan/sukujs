@@ -1,0 +1,102 @@
+---
+title: Sentry
+description: Send a Suku app's traces and logs to Sentry through its OpenTelemetry endpoint, step by step.
+---
+
+Sentry accepts OpenTelemetry directly, so a Suku app needs no Sentry SDK. This guide uses the
+setup described in [observability](/docs/observability) and sends **traces and logs**.
+
+## 1. Add observability to the project
+
+A new project:
+
+```bash
+suku new my-api --observability otel
+```
+
+Or one you already have:
+
+```bash
+suku generate observability
+bun install
+```
+
+## 2. Find the endpoint and the key in Sentry
+
+In Sentry, open **Settings**, then **Projects**, and choose your project. In the menu on the
+left, under **SDK Setup**, open **Client Keys (DSN)**. Choose the **OpenTelemetry (OTLP)** tab.
+
+![Sentry's Client Keys page with the OpenTelemetry (OTLP) tab open, showing the OTLP Endpoint field. The DSN and the account's ids are blacked out](/images/observability/sentry-otlp-endpoint.png)
+
+You need two values from this page:
+
+- **The OTLP Endpoint**, which ends in `/integration/otlp`.
+- **The public key.** It is the first part of the DSN shown above the tabs: the text between
+  `https://` and `@`.
+
+## 3. Put the values in `.env`
+
+```bash title=".env"
+OTEL_SERVICE_NAME="my-api"
+OTEL_EXPORTER_OTLP_ENDPOINT="https://o<org-id>.ingest.us.sentry.io/api/<project-id>/integration/otlp"
+OTEL_EXPORTER_OTLP_HEADERS="x-sentry-auth=sentry sentry_key=<public key>"
+OTEL_METRICS_EXPORTER=none
+```
+
+- **Copy the endpoint as it is.** Do not add `/v1/traces`; the app adds that itself.
+- **The header value is the whole phrase** `sentry sentry_key=<public key>`, not the key by
+  itself. A wrong header is the usual reason Sentry answers `401`.
+- **`OTEL_METRICS_EXPORTER=none`** stops the app sending runtime metrics, which Sentry's
+  OpenTelemetry endpoint does not list among what it takes.
+
+The project's `.gitignore` already lists `.env`.
+
+<Callout title="Where the variables go in production">
+  `suku dev` reads `.env` for you, because Bun does. A built app started with Node does not: set the
+  same variables in your host, container or process manager.
+</Callout>
+
+## 4. Run the app and make a request
+
+```bash
+bun run dev
+```
+
+```bash
+curl -H 'x-app-trace: 1' localhost:3000/hello/Ada
+```
+
+Every log line is sent. Only one request in ten is traced, so the `x-app-trace: 1` header is
+there to make sure this one is.
+
+## 5. See it in Sentry
+
+Open **Explore**, then **Traces**. Each request is one trace, named after its route. Open one
+to see where the time went: the request at the top, and under it every method marked with
+[`@Traced()`](/docs/observability#use-it-in-your-code).
+
+![A trace in Sentry for GET /hello/:name, 655 ms long, with HelloService.greet under it and two calls inside that, each drawn as a bar showing how long it took](/images/observability/sentry-trace.png)
+
+Logs are under **Explore**, then **Logs**. Each line is linked to the trace of the request
+that wrote it.
+
+## What is different from Sentry's own SDK
+
+- **Errors arrive on the trace and as error logs.** Sentry's Issues list is built for its own
+  SDK, so check in your project whether an error sent this way also opens an issue.
+- **No runtime metrics**, as set in step 3.
+- **Nothing changes in your code** if you later move to another vendor. Only the variables
+  do.
+
+## If nothing shows up
+
+The app does not print anything when sending fails.
+
+- **Check the header** is `x-sentry-auth=sentry sentry_key=<public key>`, with the space and
+  both `=` signs.
+- **Check the endpoint** is the one from the OpenTelemetry (OTLP) tab, not the DSN.
+- **Restart the app** after changing `.env`.
+- **Widen the time range** in Sentry, and give it a minute: traces are sent in batches.
+
+Sentry's own page for this is
+[OpenTelemetry Protocol (OTLP)](https://docs.sentry.io/concepts/otlp/).
