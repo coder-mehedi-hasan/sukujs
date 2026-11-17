@@ -1,5 +1,6 @@
 import { CliError } from './errors.js';
 import { type Names, names, singular, splitPath } from './names.js';
+import { addObservability, parseObservability } from './observability.js';
 import type { Plan } from './plan.js';
 import { importPath, type Project } from './project.js';
 import { addArrayToFeature, addImport, addToArray } from './register.js';
@@ -21,6 +22,10 @@ export const SCHEMATICS = {
   service: { alias: 's', description: 'A service class (or service() with --classless)' },
   middleware: { alias: 'mw', description: 'A middleware' },
   resource: { alias: 'res', description: 'A CRUD feature: routes, service, schemas and a test' },
+  observability: {
+    alias: 'obs',
+    description: 'Errors, traces and logs sent to Sentry or an OpenTelemetry vendor',
+  },
 } as const;
 
 export type Schematic = keyof typeof SCHEMATICS;
@@ -336,6 +341,25 @@ export function generate(
       const bare = !/[\\/]/.test(input);
       const t = target(project, bare ? `middlewares/${input}` : input, options, false);
       plan.create(t.file('middleware'), middlewareFile(t));
+      return;
+    }
+    case 'observability': {
+      // The name is the vendor: `suku generate observability sentry`.
+      const vendor = parseObservability(input);
+      if (!vendor) throw new CliError('Name a vendor: suku generate observability sentry');
+      addObservability(
+        {
+          ...project,
+          read: (path) => plan.read(path),
+          create: (path, content) => plan.create(path, content),
+          update: (path, content) => plan.update(path, content),
+          note: (message) => plan.note(message),
+        },
+        vendor,
+      );
+      plan.note(
+        'Install the new dependencies, then set the variables added to .env.example where the app runs. Nothing is sent without them.',
+      );
       return;
     }
     case 'resource': {

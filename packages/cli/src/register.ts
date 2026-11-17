@@ -35,6 +35,27 @@ export function addToArray(source: string, key: string, item: string): string | 
 }
 
 /**
+ * Like `addToArray`, but puts `item` first, for arrays where the order matters.
+ */
+export function prependToArray(source: string, key: string, item: string): string | undefined {
+  const match = new RegExp(`(\\b${key}\\s*:\\s*\\[)([^\\]]*)(\\])`).exec(source);
+  if (!match) return undefined;
+  const [whole, open = '', body = '', close = ''] = match;
+  if (new RegExp(`\\b${item}\\b`).test(body)) return source;
+  let next: string;
+  if (body.trim() === '') {
+    next = `${open}${item}${close}`;
+  } else if (body.includes('\n')) {
+    const indent = /\n([ \t]*)\S/.exec(body)?.[1] ?? '    ';
+    const rest = body.startsWith('\n') ? body : `\n${indent}${body.trimStart()}`;
+    next = `${open}\n${indent}${item},${rest}${close}`;
+  } else {
+    next = `${open}${item}, ${body.trim()}${close}`;
+  }
+  return source.slice(0, match.index) + next + source.slice(match.index + whole.length);
+}
+
+/**
  * Adds `key: [item]` as the first property of the options object passed to `feature(...)`,
  * for a feature that does not have that array yet.
  */

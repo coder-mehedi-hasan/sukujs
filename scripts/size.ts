@@ -12,7 +12,8 @@ const budgets: Record<string, number> = {
   'packages/crypto/src/index.ts': 12 * 1024,
   'packages/security/src/index.ts': 8 * 1024,
   'packages/graphql/src/index.ts': 6 * 1024,
-  'packages/cli/src/index.ts': 48 * 1024,
+  // Mostly templates: the starter, the generators and two observability drivers.
+  'packages/cli/src/index.ts': 72 * 1024,
 };
 
 let failed = false;

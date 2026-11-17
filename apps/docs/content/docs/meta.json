@@ -17,6 +17,7 @@
     "validation",
     "configuration",
     "logging",
+    "observability",
     "testing",
     "---Security---",
     "...security",

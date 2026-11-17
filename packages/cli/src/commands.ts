@@ -2,6 +2,7 @@ import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { basename, join, resolve } from 'node:path';
 import { DEPLOY_TARGETS, type DeployTarget, parseDeployTargets } from './deploy.js';
 import { CliError } from './errors.js';
+import { OBSERVABILITY, type ObservabilityVendor, parseObservability } from './observability.js';
 import { names } from './names.js';
 import { Plan } from './plan.js';
 import { loadProject, type Runtime } from './project.js';
@@ -36,6 +37,8 @@ export interface NewOptions {
   packageManager?: string;
   /** Deployment targets, as given on the command line: `['docker,pm2']`. */
   deploy?: string[];
+  /** `sentry` or `none`. */
+  observability?: string;
   skipInstall?: boolean;
   skipGit?: boolean;
   /** Accept the default for every question that a flag did not answer. */
@@ -106,6 +109,22 @@ export async function newProject(
         )
       : [];
 
+  const observability =
+    options.observability !== undefined
+      ? parseObservability(options.observability)
+      : ask
+        ? parseObservability(
+            await ask.select('Observability', [
+              { value: 'none', label: 'None', hint: 'default' },
+              ...Object.entries(OBSERVABILITY).map(([value, { label, hint }]) => ({
+                value: value as ObservabilityVendor,
+                label,
+                hint,
+              })),
+            ]),
+          )
+        : undefined;
+
   const git =
     options.skipGit === undefined && ask
       ? await ask.confirm('Initialise a git repository?')
@@ -116,7 +135,14 @@ export async function newProject(
       : !options.skipInstall;
 
   const plan = new Plan(root);
-  const files = starter({ name, runtime, version: cliVersion(), packageManager: manager, deploy });
+  const files = starter({
+    name,
+    runtime,
+    version: cliVersion(),
+    packageManager: manager,
+    deploy,
+    ...(observability ? { observability } : {}),
+  });
   for (const [path, content] of Object.entries(files)) plan.create(path, content);
   if (ask) io.log('');
   plan.commit({

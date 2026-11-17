@@ -115,8 +115,11 @@ export class PinoLogger extends Logger {
 
   /** Hands an `Error` to pino itself, which records its type, message, stack and cause. */
   override error(message: unknown, meta?: Record<string, unknown>): void {
-    if (message instanceof Error) this.pino.error({ ...meta, err: message }, message.message);
-    else super.error(message, meta);
+    if (message instanceof Error) {
+      this.pino.error({ ...meta, err: message }, message.message);
+    } else {
+      super.error(message, meta);
+    }
   }
 }
 
@@ -258,7 +261,8 @@ log backends recognise them.
 | Logs sent to a collector over OTLP | Add [pino-opentelemetry-transport](https://github.com/pinojs/pino-opentelemetry-transport) as a pino transport. |
 | Logs collected from stdout         | Nothing. Point your collector at the container's output.                                                        |
 
-Setting up the SDK itself is up to the app. The starter does not include it.
+Setting up an OpenTelemetry SDK is up to the app. The starter does not include one. For
+errors, traces and logs in one place without that work, see [observability](/docs/observability).
 
 <Callout title="Workers and Vercel entry points">
   `suku new` registers the pino logger in `src/main.ts` only. The Cloudflare Workers and Vercel

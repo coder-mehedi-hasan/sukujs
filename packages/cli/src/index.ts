@@ -43,6 +43,8 @@ Options for new (in a terminal, anything you leave out is asked):
   --package-manager <name>      bun, npm, pnpm or yarn (default: bun)
   --deploy <targets>            docker, pm2, systemd, cloudflare, vercel or none
                                 (comma-separated or repeated)
+  --observability <vendor>      sentry, glitchtip, opentelemetry, grafana, honeycomb, signoz,
+                                jaeger, axiom, newrelic, datadog or none (default: none)
   --skip-install                Do not install dependencies
   --skip-git                    Do not run git init
   -y, --yes                     Ask nothing, use the defaults
@@ -74,6 +76,7 @@ const OPTIONS = {
   'skip-install': { type: 'boolean' },
   'skip-git': { type: 'boolean' },
   deploy: { type: 'string', multiple: true },
+  observability: { type: 'string' },
   yes: { type: 'boolean', short: 'y' },
   classless: { type: 'boolean' },
   flat: { type: 'boolean' },
@@ -146,6 +149,7 @@ export async function run(argv: string[], io: Partial<Io> = {}): Promise<number>
             runtime: values.runtime,
             packageManager: values['package-manager'],
             deploy: values.deploy,
+            observability: values.observability,
             yes: values.yes,
             skipInstall: values['skip-install'],
             skipGit: values['skip-git'],

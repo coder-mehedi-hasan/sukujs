@@ -1,4 +1,5 @@
 import { type DeployTarget, deployFiles } from './deploy.js';
+import { addObservability, OBSERVABILITY, type ObservabilityVendor } from './observability.js';
 import type { Runtime } from './project.js';
 
 export interface StarterOptions {
@@ -11,6 +12,8 @@ export interface StarterOptions {
   packageManager?: string;
   /** Deployment targets to add files for. */
   deploy?: DeployTarget[];
+  /** Where errors, traces and logs are sent. Default: nowhere. */
+  observability?: ObservabilityVendor;
 }
 
 /** The files of a new project, keyed by path. */
@@ -220,8 +223,11 @@ ${explicitInject ? '  static inject = [Env];\n\n' : ''}  readonly pino: pino.Log
 
   /** Hands an \`Error\` to pino itself, which records its type, message, stack and cause. */
   override error(message: unknown, meta?: Record<string, unknown>): void {
-    if (message instanceof Error) this.pino.error({ ...meta, err: message }, message.message);
-    else super.error(message, meta);
+    if (message instanceof Error) {
+      this.pino.error({ ...meta, err: message }, message.message);
+    } else {
+      super.error(message, meta);
+    }
   }
 }
 
@@ -302,5 +308,37 @@ test('GET /hello/:name', async () => {
 });
 `,
   };
-  return { ...files, ...extra.files };
+  const all = { ...files, ...extra.files };
+  if (options.observability) {
+    const vendor = options.observability;
+    addObservability(
+      {
+        runtime,
+        sourceRoot: 'src',
+        entry: 'src/main.ts',
+        importExtension: '',
+        read: (path) => all[path],
+        create: (path, content) => void (all[path] = content),
+        update: (path, content) => void (all[path] = content),
+        // Every edit applies to the starter's own files, so there is nothing to report.
+        note: () => undefined,
+      },
+      vendor,
+    );
+    const { label, driver } = OBSERVABILITY[vendor];
+    const variable = driver === 'sentry' ? 'SENTRY_DSN' : 'OTEL_EXPORTER_OTLP_ENDPOINT';
+    all['README.md'] += `
+## Observability
+
+Errors, request traces, logs and runtime metrics go to ${label} once \`${variable}\` is
+set. Without it nothing is sent, which is how development and tests run. \`.env.example\` shows
+the values.
+
+- \`src/instrument.ts\` holds the settings: the sample rate and the header that forces a trace.
+- \`src/observability/\` is a vendor-neutral layer. Only \`drivers/\` imports a vendor's SDK.
+- \`@Traced()\` on a method records a span for it. \`telemetry.captureException(error)\`
+  reports an error you handled yourself.
+`;
+  }
+  return all;
 }

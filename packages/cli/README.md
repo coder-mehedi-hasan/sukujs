@@ -28,13 +28,14 @@ suku new my-api --runtime bun --deploy docker,cloudflare --yes
 
 ## Schematics
 
-| Schematic    | Alias | Creates                                                |
-| ------------ | ----- | ------------------------------------------------------ |
-| `resource`   | `res` | A CRUD feature: routes, service, schemas and a test    |
-| `feature`    | `f`   | A feature                                              |
-| `routes`     | `r`   | A `@Routes` class, or `route.group` with `--classless` |
-| `service`    | `s`   | A `@Service` class, or `service()` with `--classless`  |
-| `middleware` | `mw`  | A middleware                                           |
+| Schematic       | Alias | Creates                                                           |
+| --------------- | ----- | ----------------------------------------------------------------- |
+| `resource`      | `res` | A CRUD feature: routes, service, schemas and a test               |
+| `feature`       | `f`   | A feature                                                         |
+| `routes`        | `r`   | A `@Routes` class, or `route.group` with `--classless`            |
+| `service`       | `s`   | A `@Service` class, or `service()` with `--classless`             |
+| `middleware`    | `mw`  | A middleware                                                      |
+| `observability` | `obs` | Errors, traces and logs sent to Sentry or an OpenTelemetry vendor |
 
 ```bash
 suku g resource products
