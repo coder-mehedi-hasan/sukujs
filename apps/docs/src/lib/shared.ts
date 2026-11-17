@@ -1,4 +1,6 @@
 import { createGetUrl } from 'fumadocs-core/source';
+// Every @sukujs/* package shares one version, so any of them gives the release shown here.
+import corePackage from '../../../../packages/core/package.json';
 
 export const appName = 'Suku';
 export const docsRoute = '/docs';
@@ -9,6 +11,11 @@ export const gitConfig = {
   repo: 'sukujs',
   branch: 'main',
 };
+
+/** The Suku release these docs describe, read at build time. */
+export const version: string = corePackage.version;
+export const repoUrl = `https://github.com/${gitConfig.user}/${gitConfig.repo}`;
+export const changelogUrl = `${repoUrl}/blob/${gitConfig.branch}/CHANGELOG.md`;
 
 const getDocsUrl = createGetUrl(docsRoute);
 

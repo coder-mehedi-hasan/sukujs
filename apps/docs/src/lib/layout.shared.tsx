@@ -1,5 +1,5 @@
 import type { BaseLayoutProps } from 'fumadocs-ui/layouts/shared';
-import { appName, gitConfig } from './shared';
+import { appName, changelogUrl, repoUrl, version } from './shared';
 
 /**
  * The Suku mark: a two-by-two grid with three tiles placed and the fourth slot left empty.
@@ -41,9 +41,19 @@ export function SukuLogo({ className }: { className?: string }) {
 export function baseOptions(): BaseLayoutProps {
   return {
     nav: {
-      title: <SukuLogo className="h-5 w-auto" />,
+      title: (
+        <>
+          <SukuLogo className="h-5 w-auto" />
+          <span className="rounded-md border px-1.5 py-0.5 text-xs font-medium text-fd-muted-foreground">
+            v{version}
+          </span>
+        </>
+      ),
     },
-    links: [{ text: 'Documentation', url: '/docs', active: 'nested-url' }],
-    githubUrl: `https://github.com/${gitConfig.user}/${gitConfig.repo}`,
+    links: [
+      { text: 'Documentation', url: '/docs', active: 'nested-url' },
+      { text: 'Changelog', url: changelogUrl, external: true },
+    ],
+    githubUrl: repoUrl,
   };
 }
