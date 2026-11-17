@@ -43,6 +43,10 @@ export function starter(options: StarterOptions): Record<string, string> {
       '@sukujs/core': range,
       [`@sukujs/${platform}`]: range,
       '@sukujs/security': range,
+      // The API only: it does nothing until the app installs an OpenTelemetry SDK.
+      '@opentelemetry/api': '^1.9.0',
+      pino: '^10.0.0',
+      'pino-pretty': '^13.0.0',
       zod: '^4.0.0',
     },
     devDependencies: {
@@ -75,7 +79,7 @@ export function starter(options: StarterOptions): Record<string, string> {
     'package.json': `${JSON.stringify(pkg, null, 2)}\n`,
     'tsconfig.json': `${JSON.stringify(tsconfig, null, 2)}\n`,
     '.gitignore': 'node_modules/\ndist/\n.env\n.DS_Store\n',
-    '.env.example': 'PORT=3000\n',
+    '.env.example': 'PORT=3000\nLOG_LEVEL=info\n',
     'README.md': `# ${name}
 
 A [Suku](https://github.com/sukujs/sukujs) API.
@@ -89,6 +93,24 @@ ${pm} run start    # run the bundle with ${runtime === 'bun' ? 'Bun' : 'Node'}
 
 The \`dev\`, \`build\` and \`test\` commands use [Bun](https://bun.sh).
 
+## Logs
+
+The app logs with [pino](https://getpino.io), set up in \`src/logger.ts\`. Ask for \`Logger\` from
+\`@sukujs/core\` in any service to write to it.
+
+In a terminal the lines are made for reading, by [pino-pretty](https://github.com/pinojs/pino-pretty).
+Anywhere else (a container, a pipe, a log file) each line is one JSON object, which is what
+log collectors expect.
+
+\`\`\`bash
+LOG_LEVEL=debug ${pm} run dev    # debug, info (default), warn or error
+LOG_FORMAT=json ${pm} run dev    # force json, or pretty
+\`\`\`
+
+Every line written during an OpenTelemetry span carries its \`trace_id\` and \`span_id\`, once
+the app runs with an OpenTelemetry SDK. To send logs to a collector as well, add
+[pino-opentelemetry-transport](https://github.com/pinojs/pino-opentelemetry-transport).
+
 ## Generate code
 
 \`\`\`bash
@@ -99,21 +121,24 @@ ${pmx} suku generate service billing
 ${pmx} suku generate middleware audit
 \`\`\`
 ${extra.readme.length > 0 ? `\n## Deploy\n\n${extra.readme.join('\n\n')}\n` : ''}`,
-    'src/main.ts': `import { Suku } from '@sukujs/core';
+    'src/main.ts': `import { Logger, singleton, Suku } from '@sukujs/core';
 import { ${adapter} } from '@sukujs/${platform}';
 import { securityHeaders } from '@sukujs/security';
 import { AppFeature } from './app.feature';
 import { Env } from './config';
+import { PinoLogger, requestLogger } from './logger';
 
 const app = await Suku.create({
   features: [Env.load(), AppFeature],
+  // Replaces the built-in console logger: every \`Logger\` in the app now writes through pino.
+  services: [singleton(Logger, PinoLogger)],
   // Defensive headers on every response, including 404s and errors.
-  middlewares: [securityHeaders()],
+  middlewares: [requestLogger, securityHeaders()],
   adapter: ${adapter}(),
 });
 
 const server = await app.listen(app.get(Env).PORT);
-console.log(\`listening on \${server.url}\`);
+app.get(Logger).info(\`listening on \${server.url}\`);
 
 // Finish requests in flight, then close. Give up after ten seconds.
 let closing = false;
@@ -137,8 +162,81 @@ export const Env = defineConfig(
   'env',
   z.object({
     PORT: z.coerce.number().int().min(0).default(3000),
+    LOG_LEVEL: z.enum(['debug', 'info', 'warn', 'error']).default('info'),
+    // Unset: readable lines in a terminal, JSON everywhere else.
+    LOG_FORMAT: z.enum(['json', 'pretty']).optional(),
   }),
 );
+`,
+    'src/logger.ts': `import { type Infer, ${explicitInject ? '' : 'Inject, '}Logger, type LogLevel, middleware${explicitInject ? '' : ', Service'} } from '@sukujs/core';
+import { isSpanContextValid, trace } from '@opentelemetry/api';
+import pino from 'pino';
+import pretty from 'pino-pretty';
+import { Env } from './config';
+
+/**
+ * The ids of the OpenTelemetry span that is active right now, under the field names
+ * OpenTelemetry tools expect. Empty until the app runs with an OpenTelemetry SDK.
+ */
+export function traceContext(): Record<string, string> {
+  const span = trace.getActiveSpan()?.spanContext();
+  if (!span || !isSpanContextValid(span)) return {};
+  return {
+    trace_id: span.traceId,
+    span_id: span.spanId,
+    trace_flags: \`0\${span.traceFlags.toString(16)}\`,
+  };
+}
+
+/**
+ * Suku's \`Logger\`, written with pino. In a terminal the lines are made for reading. Anywhere
+ * else (a container, a pipe, a log file) each line is one JSON object, which is what log
+ * collectors expect. \`LOG_FORMAT\` overrides the choice.
+ */
+${explicitInject ? '' : '@Service()\n'}export class PinoLogger extends Logger {
+${explicitInject ? '  static inject = [Env];\n\n' : ''}  readonly pino: pino.Logger;
+
+  constructor(${explicitInject ? '' : '@Inject(Env) '}env: Infer<typeof Env.schema>) {
+    super();
+    // \`mixin\` runs for every line, so each one gets the trace it was written in.
+    const format = env.LOG_FORMAT ?? (process.stdout.isTTY ? 'pretty' : 'json');
+    this.pino = pino(
+      { level: env.LOG_LEVEL, mixin: traceContext },
+      // https://github.com/pinojs/pino-pretty#options
+      format === 'pretty'
+        ? pretty({
+            singleLine: true,
+            translateTime: 'SYS:standard',
+            ignore: 'pid,hostname',
+            sync: true,
+          })
+        : undefined,
+    );
+  }
+
+  log(level: LogLevel, message: string, meta?: Record<string, unknown>): void {
+    this.pino[level](meta ?? {}, message);
+  }
+
+  /** Hands an \`Error\` to pino itself, which records its type, message, stack and cause. */
+  override error(message: unknown, meta?: Record<string, unknown>): void {
+    if (message instanceof Error) this.pino.error({ ...meta, err: message }, message.message);
+    else super.error(message, meta);
+  }
+}
+
+/** One line per request: method, path, status and how long it took. */
+export const requestLogger = middleware(async (ctx, next) => {
+  const started = performance.now();
+  const response = await next();
+  ctx.provider.get(Logger).info('request', {
+    method: ctx.method,
+    path: ctx.url.pathname,
+    status: response.status,
+    duration_ms: Math.round(performance.now() - started),
+  });
+  return response;
+});
 `,
     'src/app.feature.ts': `import { feature, route } from '@sukujs/core';
 import { HelloFeature } from './hello/hello.feature';

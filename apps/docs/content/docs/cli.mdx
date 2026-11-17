@@ -52,6 +52,7 @@ my-api/
   src/
     main.ts              # creates the app with security headers, listens, shuts down on SIGTERM
     config.ts            # the environment, validated at startup
+    logger.ts            # pino logging, with OpenTelemetry trace ids, and a request log
     app.feature.ts       # the root feature and a /health route
     app.test.ts          # tests that call the app in process
     hello/
@@ -61,6 +62,10 @@ my-api/
   package.json
   tsconfig.json
 ```
+
+The project logs with [pino](https://getpino.io). `pino`, `pino-pretty` and `@opentelemetry/api` are in the
+project's own `package.json`, not in Suku, and `src/logger.ts` is yours to change. See
+[logging](/docs/logging#pino-and-opentelemetry).
 
 ### Deployment targets
 

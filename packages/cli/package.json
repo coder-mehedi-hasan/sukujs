@@ -49,6 +49,12 @@
     "node": ">=22"
   },
   "devDependencies": {
+    "@opentelemetry/api": "^1.10.0",
+    "@opentelemetry/context-async-hooks": "^3.1.1",
+    "@sentry/bun": "^11.13.0",
+    "@sentry/node": "^11.13.0",
+    "pino": "^10.4.0",
+    "pino-pretty": "^13.2.0",
     "zod": "^4.6.7"
   }
 }

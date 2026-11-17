@@ -38,21 +38,232 @@ Extend `Logger`, implement `log`, and register the class. Your registration wins
 default.
 
 ```ts
-import pino from 'pino';
-
 @Service()
-export class PinoLogger extends Logger {
-  private readonly pino = pino();
-
+export class MyLogger extends Logger {
   log(level: LogLevel, message: string, meta?: Record<string, unknown>) {
-    this.pino[level](meta ?? {}, message);
+    // write it wherever you like
   }
 }
 
-await Suku.create({ features: [AppFeature], services: [singleton(Logger, PinoLogger)] });
+await Suku.create({ features: [AppFeature], services: [singleton(Logger, MyLogger)] });
 ```
 
 `SilentLogger` discards everything, which is useful in tests.
+
+## Pino and OpenTelemetry [#pino-and-opentelemetry]
+
+Suku does not ship a production logger. A project created with [`suku new`](/docs/cli) logs
+with [pino](https://getpino.io) instead: `pino`, `pino-pretty` and `@opentelemetry/api` are
+dependencies of the project, and the code below is its `src/logger.ts`. To add it to an existing app, install
+them and copy the file.
+
+```bash
+bun add pino pino-pretty @opentelemetry/api
+```
+
+```ts title="src/logger.ts"
+import { type Infer, Inject, Logger, type LogLevel, middleware, Service } from '@sukujs/core';
+import { isSpanContextValid, trace } from '@opentelemetry/api';
+import pino from 'pino';
+import pretty from 'pino-pretty';
+import { Env } from './config';
+
+/**
+ * The ids of the OpenTelemetry span that is active right now, under the field names
+ * OpenTelemetry tools expect. Empty until the app runs with an OpenTelemetry SDK.
+ */
+export function traceContext(): Record<string, string> {
+  const span = trace.getActiveSpan()?.spanContext();
+  if (!span || !isSpanContextValid(span)) return {};
+  return {
+    trace_id: span.traceId,
+    span_id: span.spanId,
+    trace_flags: `0${span.traceFlags.toString(16)}`,
+  };
+}
+
+/**
+ * Suku's `Logger`, written with pino. In a terminal the lines are made for reading. Anywhere
+ * else (a container, a pipe, a log file) each line is one JSON object, which is what log
+ * collectors expect. `LOG_FORMAT` overrides the choice.
+ */
+@Service()
+export class PinoLogger extends Logger {
+  readonly pino: pino.Logger;
+
+  constructor(@Inject(Env) env: Infer<typeof Env.schema>) {
+    super();
+    // `mixin` runs for every line, so each one gets the trace it was written in.
+    const format = env.LOG_FORMAT ?? (process.stdout.isTTY ? 'pretty' : 'json');
+    this.pino = pino(
+      { level: env.LOG_LEVEL, mixin: traceContext },
+      // https://github.com/pinojs/pino-pretty#options
+      format === 'pretty'
+        ? pretty({
+            singleLine: true,
+            translateTime: 'SYS:standard',
+            ignore: 'pid,hostname',
+            sync: true,
+          })
+        : undefined,
+    );
+  }
+
+  log(level: LogLevel, message: string, meta?: Record<string, unknown>): void {
+    this.pino[level](meta ?? {}, message);
+  }
+
+  /** Hands an `Error` to pino itself, which records its type, message, stack and cause. */
+  override error(message: unknown, meta?: Record<string, unknown>): void {
+    if (message instanceof Error) this.pino.error({ ...meta, err: message }, message.message);
+    else super.error(message, meta);
+  }
+}
+
+/** One line per request: method, path, status and how long it took. */
+export const requestLogger = middleware(async (ctx, next) => {
+  const started = performance.now();
+  const response = await next();
+  ctx.provider.get(Logger).info('request', {
+    method: ctx.method,
+    path: ctx.url.pathname,
+    status: response.status,
+    duration_ms: Math.round(performance.now() - started),
+  });
+  return response;
+});
+```
+
+`LOG_LEVEL` and `LOG_FORMAT` are two more variables in the project's
+[configuration](/docs/configuration).
+
+```ts title="src/config.ts"
+LOG_LEVEL: z.enum(['debug', 'info', 'warn', 'error']).default('info'),
+// Unset: readable lines in a terminal, JSON everywhere else.
+LOG_FORMAT: z.enum(['json', 'pretty']).optional(),
+```
+
+Register both in `src/main.ts`.
+
+```ts title="src/main.ts"
+const app = await Suku.create({
+  features: [Env.load(), AppFeature],
+  services: [singleton(Logger, PinoLogger)],
+  middlewares: [requestLogger, securityHeaders()],
+  adapter: nodeAdapter(),
+});
+```
+
+Nothing else changes: services keep asking for `Logger`, and every line now goes through
+pino.
+
+### Two formats
+
+In a terminal the lines are made for reading, by
+[pino-pretty](https://github.com/pinojs/pino-pretty), with a colour per level.
+
+```text
+[2026-11-17 09:52:13.123 +0600] INFO: listening on http://0.0.0.0:3000
+[2026-11-17 09:52:17.127 +0600] INFO: Greeting user {"user":"rayhan"}
+[2026-11-17 09:52:17.128 +0600] INFO: request {"method":"GET","path":"/hello/rayhan","status":200,"duration_ms":4}
+```
+
+Anywhere else (a container, a pipe, a log file) each line is one JSON object, which is what
+log collectors expect.
+
+```json
+{
+  "level": 30,
+  "time": 1763366400000,
+  "pid": 4121,
+  "hostname": "api-1",
+  "method": "GET",
+  "path": "/hello/rayhan",
+  "status": 200,
+  "duration_ms": 4,
+  "msg": "request"
+}
+```
+
+The choice is automatic. Set `LOG_FORMAT=json` or `LOG_FORMAT=pretty` to force one. To change
+how the readable lines look, edit the [pino-pretty options](https://github.com/pinojs/pino-pretty#options)
+in `src/logger.ts`.
+
+<Callout type="warn" title="A field called `name`">
+  pino keeps `name` for the logger's own name, so pino-pretty prints `{ name: 'rayhan' }` as
+  `INFO (rayhan): ...` and not as a field. The JSON output is unaffected. Call the field
+  something else, such as `user`.
+</Callout>
+
+### What it looks like
+
+A service asks for `Logger` and writes at each level.
+
+```ts title="src/hello/hello.service.ts"
+import { Logger, Service } from '@sukujs/core';
+
+@Service()
+export class HelloService {
+  constructor(private readonly logger: Logger) {}
+
+  greet(name: string): string {
+    this.logger.info('Greeting user', { name });
+    this.logger.error('Error greeting user', { name });
+    this.logger.warn('Warning greeting user', { name });
+    this.logger.debug('Debug greeting user', { name });
+    return `Hello, ${name}!`;
+  }
+}
+```
+
+`GET /hello/rayhan` then prints this in the terminal.
+
+![The HelloService in an editor, and below it the terminal showing coloured INFO, ERROR and WARN lines for the request to /hello/rayhan](/images/logging-terminal.png)
+
+Three things to notice:
+
+- **The `debug` line is missing.** The default level is `info`, so anything below it is
+  dropped. Run with `LOG_LEVEL=debug` to see it.
+- **`(rayhan)` is the `name` field**, shown the way the callout above describes.
+- **The request line comes last**, because `requestLogger` writes it after the handler has
+  finished.
+
+Import `Logger` as a value, not with `import { type Logger }`. The container reads the
+constructor's parameter types when the app starts, and a type-only import leaves it nothing to
+read.
+
+### Trace ids
+
+`@opentelemetry/api` is only the API. It does nothing until the app runs with an
+OpenTelemetry SDK, and adds no cost before then. Once an SDK is running, every line written
+during a span carries that span's ids, so a log line can be matched to its trace.
+
+```json
+{
+  "level": 30,
+  "msg": "charging order",
+  "orderId": 7,
+  "trace_id": "0af7651916cd43dd8448eb211c80319c",
+  "span_id": "b7ad6b7169203331",
+  "trace_flags": "01"
+}
+```
+
+These are the field names OpenTelemetry's own pino instrumentation writes, so collectors and
+log backends recognise them.
+
+| You want                           | Do this                                                                                                         |
+| ---------------------------------- | --------------------------------------------------------------------------------------------------------------- |
+| Logs matched to traces             | Run the app with an OpenTelemetry SDK. The logger needs no change.                                              |
+| Logs sent to a collector over OTLP | Add [pino-opentelemetry-transport](https://github.com/pinojs/pino-opentelemetry-transport) as a pino transport. |
+| Logs collected from stdout         | Nothing. Point your collector at the container's output.                                                        |
+
+Setting up the SDK itself is up to the app. The starter does not include it.
+
+<Callout title="Workers and Vercel entry points">
+  `suku new` registers the pino logger in `src/main.ts` only. The Cloudflare Workers and Vercel
+  entry points it can generate keep the built-in `ConsoleLogger`.
+</Callout>
 
 ## Unhandled errors
 

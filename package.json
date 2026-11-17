@@ -14,6 +14,7 @@
     "test": "bun test packages examples/hello examples/lifecycle examples/database examples/deploy examples/graphql examples/base && bun run test:node",
     "lint": "eslint .",
     "format": "prettier --write .",
+    "suku": "bun packages/cli/src/bin.ts",
     "size": "bun scripts/size.ts",
     "check": "bun run version:check && bun run lint && bun run typecheck && bun run test && bun run build && bun run size",
     "test:node": "bun run --filter '@sukujs/crypto' build && node --experimental-strip-types --test 'packages/*/test/*.node-test.ts'",

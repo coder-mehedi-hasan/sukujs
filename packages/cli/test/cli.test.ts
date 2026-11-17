@@ -7,7 +7,8 @@ import { singular } from '../src/names.js';
 import { addArrayToFeature, addImport, addToArray } from '../src/register.js';
 
 const repo = resolve(import.meta.dir, '../../..');
-// Inside the repository, so generated projects resolve zod from the workspace.
+// Inside the repository, so generated projects resolve zod, pino, pino-pretty and @opentelemetry/api from
+// this package's devDependencies.
 const tmp = join(import.meta.dir, '.tmp', String(process.pid));
 mkdirSync(tmp, { recursive: true });
 afterAll(() => rmSync(join(import.meta.dir, '.tmp'), { recursive: true, force: true }));
@@ -245,9 +246,14 @@ describe('a generated project', () => {
     );
     expect(JSON.parse(read(root, 'package.json')).dependencies['@sukujs/security']).toBeDefined();
     expect(read(root, 'Dockerfile')).toContain('bun install --frozen-lockfile');
+    const { dependencies } = JSON.parse(read(root, 'package.json'));
+    expect(dependencies.pino).toBeDefined();
+    expect(dependencies['pino-pretty']).toBeDefined();
+    expect(dependencies['@opentelemetry/api']).toBeDefined();
+    expect(read(root, 'src/main.ts')).toContain('services: [singleton(Logger, PinoLogger)]');
     // Every entry point of the starter sets the defensive headers.
     for (const entry of ['src/main.ts', 'src/worker.ts', 'api/index.ts']) {
-      expect(read(root, entry)).toContain('middlewares: [securityHeaders()]');
+      expect(read(root, entry)).toContain('securityHeaders()]');
     }
 
     expect((await cli(root, 'g', 'resource', 'products')).code).toBe(0);
@@ -276,17 +282,30 @@ describe('a generated project', () => {
       env: { ...process.env, PORT: '0' },
       stdout: 'pipe',
     });
+    // The app logs with pino: every line of stdout is one JSON object.
     const reader = server.stdout.getReader();
     let text = '';
-    while (!text.includes('listening on')) {
-      const { value, done } = await reader.read();
-      if (done) break;
-      text += new TextDecoder().decode(value);
-    }
-    const url = /listening on (\S+)/.exec(text)?.[1];
+    const logged = async (msg: string): Promise<Record<string, unknown>> => {
+      for (;;) {
+        const lines = text.split('\n').filter((line) => line.startsWith('{'));
+        const entry = lines.map((line) => JSON.parse(line)).find((e) => e.msg.startsWith(msg));
+        if (entry) return entry;
+        const { value, done } = await reader.read();
+        if (done) throw new Error(`No "${msg}" log line in:\n${text}`);
+        text += new TextDecoder().decode(value);
+      }
+    };
+    const url = /listening on (\S+)/.exec((await logged('listening on')).msg as string)?.[1];
     expect(url).toBeDefined();
     const hello = await fetch(`${url}/hello/Ada`);
     expect(await hello.json()).toEqual({ message: 'Hello, Ada!' });
+    expect(await logged('request')).toMatchObject({
+      level: 30,
+      method: 'GET',
+      path: '/hello/Ada',
+      status: 200,
+      duration_ms: expect.any(Number),
+    });
     expect(hello.headers.get('x-content-type-options')).toBe('nosniff');
     expect(hello.headers.get('content-security-policy')).toContain("default-src 'none'");
     // Unmatched routes get the headers too.
@@ -295,6 +314,62 @@ describe('a generated project', () => {
     server.kill('SIGTERM');
     expect(await server.exited).toBe(0);
   }, 120_000);
+
+  test('log lines carry the ids of the active OpenTelemetry span', async () => {
+    const root = await project('traced');
+    // Stands in for an OpenTelemetry SDK: makes a span active, then logs inside and outside it.
+    writeFileSync(
+      join(root, 'trace-check.ts'),
+      `import { AsyncLocalStorageContextManager } from '@opentelemetry/context-async-hooks';
+import { context, trace } from '@opentelemetry/api';
+import { PinoLogger } from './src/logger';
+
+context.setGlobalContextManager(new AsyncLocalStorageContextManager().enable());
+const format = process.env.LOG_FORMAT as 'pretty' | undefined;
+const logger = new PinoLogger({ PORT: 0, LOG_LEVEL: 'debug', LOG_FORMAT: format });
+const span = trace.wrapSpanContext({
+  traceId: '0af7651916cd43dd8448eb211c80319c',
+  spanId: 'b7ad6b7169203331',
+  traceFlags: 1,
+});
+context.with(trace.setSpan(context.active(), span), () => logger.debug('inside', { user: 7 }));
+logger.error(new Error('outside'));
+`,
+    );
+    const result = sh(root, 'bun', 'trace-check.ts');
+    expect(result.code).toBe(0);
+    // Not a terminal, so the lines are JSON.
+    const [inside, outside] = result.output
+      .trim()
+      .split('\n')
+      .map((line) => JSON.parse(line));
+    expect(inside).toMatchObject({
+      level: 20,
+      msg: 'inside',
+      user: 7,
+      trace_id: '0af7651916cd43dd8448eb211c80319c',
+      span_id: 'b7ad6b7169203331',
+      trace_flags: '01',
+    });
+    expect(outside).toMatchObject({
+      level: 50,
+      msg: 'outside',
+      err: { type: 'Error', message: 'outside', stack: expect.any(String) },
+    });
+    expect(outside.trace_id).toBeUndefined();
+
+    // LOG_FORMAT=pretty gives the same two entries through pino-pretty.
+    const pretty = Bun.spawnSync(['bun', 'trace-check.ts'], {
+      cwd: root,
+      env: { ...process.env, LOG_FORMAT: 'pretty' },
+    });
+    const lines = pretty.stdout.toString().split('\n');
+    expect(lines[0]).toMatch(
+      /^\[\d{4}-\d\d-\d\d .+\] DEBUG: inside \{"trace_id":"0af7651916cd43dd8448eb211c80319c",.*"user":7\}$/,
+    );
+    expect(lines[1]).toMatch(/^\[.+\] ERROR: outside/);
+    expect(pretty.stdout.toString()).toContain('Error: outside\n');
+  }, 60_000);
 
   test('the Worker bundle keeps constructor injection working', async () => {
     const root = await project('edge', '--deploy', 'cloudflare');
