@@ -3,6 +3,40 @@
 All notable changes to Suku are documented here. Packages under `packages/*` share one
 version and are released together.
 
+## 0.4.0 — 2026-11-17
+
+Suku 0.4.0 adds observability: a new package that sends request traces, logs, errors and
+runtime metrics to any OpenTelemetry endpoint, and production logging in new projects. Every
+`@sukujs/*` package is published at 0.4.0.
+
+### Features
+
+- **`@sukujs/observability`** — a new package. One middleware, `observability()`, traces every
+  request under its route name, reports unhandled errors, ships logs and sends runtime
+  metrics over OpenTelemetry (OTLP). Any vendor that accepts OTLP works without its SDK:
+  Grafana Cloud, Sentry, Honeycomb, SigNoz, New Relic, Axiom, Jaeger, Datadog through its
+  Agent, or your own collector. Set `OTLP_ENDPOINT` and, if needed, `OTLP_HEADER`. It also
+  exports `telemetry` and `@Traced()`.
+- **`ctx.error`** — a middleware can now read the error a request ended with after `next()`,
+  whether it was an `HttpException`, a 404 or an unexpected error. Useful for logging and
+  reporting middlewares.
+- **Production logging in new projects** — `suku new` now sets up [pino](https://getpino.io):
+  readable lines in a terminal, JSON everywhere else, one log line per request, and
+  OpenTelemetry trace ids on each line. `LOG_LEVEL` and `LOG_FORMAT` control it. No Suku
+  package depends on pino; the code is in the project's `src/logger.ts`.
+- **Observability in the CLI** — `suku new --observability otel` and
+  `suku generate observability` add `@sukujs/observability` to a project: the dependency, the
+  middleware, the log shipping line, and `OTLP_ENDPOINT` as a required config value.
+
+### Documentation
+
+- A new Observability section, with step-by-step guides for Grafana Cloud and Sentry.
+- The Logging page covers the pino setup and trace ids.
+- The Middlewares page covers `ctx.error`.
+- Pages that mention an example now link to its folder in the repository.
+
+**Full changelog**: https://github.com/sukujs/sukujs/compare/v0.3.0...v0.4.0
+
 ## 0.3.0 — 2026-11-16
 
 Suku 0.3.0 hardens CSRF and cookies, improves DI lifetimes for request-scoped services, and
