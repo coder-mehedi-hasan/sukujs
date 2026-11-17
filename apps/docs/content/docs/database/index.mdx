@@ -17,7 +17,7 @@ pattern works for all of them.
 | sqlkit | [sqlkit](/docs/database/sqlkit) | PostgreSQL, in process |
 | Kysely and others | [Other libraries](/docs/database/others) | PostgreSQL, in process |
 
-Every guide comes from `examples/database` in the repository. One test suite runs the same
+Every guide comes from [`examples/database`](https://github.com/sukujs/sukujs/tree/main/examples/database) in the repository. One test suite runs the same
 checks against each library: create, list, a duplicate rejected with `409`, a transaction that
 rolls back, one that commits, and the connection closing with the app.
 
@@ -257,7 +257,7 @@ how long an idle one lives, and how long one statement may run.
 
 <Callout>
   The pool options above are `pg`'s and are not run by the test suite, because they need a
-  PostgreSQL server. The health check and pagination below are tested in `examples/database`.
+  PostgreSQL server. The health check and pagination below are tested in [`examples/database`](https://github.com/sukujs/sukujs/tree/main/examples/database).
 </Callout>
 
 ### Startup and shutdown

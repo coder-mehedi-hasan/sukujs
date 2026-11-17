@@ -56,6 +56,9 @@ const app = await Suku.create({
 });
 ```
 
+[`examples/logger-otlp`](https://github.com/sukujs/sukujs/tree/main/examples/logger-otlp) in the repository
+is a complete app set up this way, with a traced service.
+
 That one line is the whole wiring. `observability()` must stay **first** in `middlewares`, so
 everything else, including the request log, happens inside the trace.
 

@@ -55,7 +55,8 @@ await Suku.create({ features: [AppFeature], services: [singleton(Logger, MyLogge
 Suku does not ship a production logger. A project created with [`suku new`](/docs/cli) logs
 with [pino](https://getpino.io) instead: `pino`, `pino-pretty` and `@opentelemetry/api` are
 dependencies of the project, and the code below is its `src/logger.ts`. To add it to an existing app, install
-them and copy the file.
+them and copy the file. [`examples/logger-app`](https://github.com/sukujs/sukujs/tree/main/examples/logger-app) in the
+repository is a project set up this way.
 
 ```bash
 bun add pino pino-pretty @opentelemetry/api
