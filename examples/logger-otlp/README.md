@@ -1,4 +1,4 @@
-# logger-sentry
+# logger-otlp
 
 A [Suku](https://github.com/sukujs/sukujs) API.
 
@@ -39,22 +39,15 @@ bunx suku generate service billing
 bunx suku generate middleware audit
 ```
 
-## Deploy
-
-### Cloudflare Workers
-
-```bash
-bun run dev:worker          # run locally in the Workers runtime
-bun run deploy:cloudflare
-```
-
 ## Observability
 
-Errors, request traces, logs and runtime metrics go to Sentry once `SENTRY_DSN` is
-set. Without it nothing is sent, which is how development and tests run. `.env.example` shows
-the values.
+Request traces, logs, errors and runtime metrics are sent with OpenTelemetry to the address
+in `OTLP_ENDPOINT`. Any OTLP endpoint works: a collector, Grafana Cloud, Sentry, Honeycomb
+and others. If it needs an API key, put it in `OTLP_HEADER` as `name=value`.
 
-- `src/instrument.ts` holds the settings: the sample rate and the header that forces a trace.
-- `src/observability/` is a vendor-neutral layer. Only `drivers/` imports a vendor's SDK.
+`OTLP_ENDPOINT` is required: `src/config.ts` stops the app at startup without it. The tests
+do not load the config, so they send nothing.
+
+- `observability()` in `src/main.ts` is the whole setup. It comes from `@sukujs/observability`.
 - `@Traced()` on a method records a span for it. `telemetry.captureException(error)`
-  reports an error you handled yourself.
+  reports an error you handled yourself. Both come from the same package.

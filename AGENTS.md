@@ -20,38 +20,46 @@ Suku ships the `Logger` abstraction and a `ConsoleLogger`, and nothing else for 
 - **Tested end to end.** The CLI suite reads the JSON lines of a built project and checks the
   trace ids against a real active span.
 
-## Scope: observability is OpenTelemetry, scaffolded, and nothing else
+## Scope: observability lives in `@sukujs/observability`, and it is OpenTelemetry only
 
-Errors, traces, logs and runtime metrics are sent with OpenTelemetry (OTLP), through code the
-CLI writes into the project. One implementation reaches every vendor, the way an S3 client
-reaches every S3-compatible store.
+Request traces, logs, errors and runtime metrics are sent with OpenTelemetry (OTLP) by one
+package, used as one middleware: `middlewares: [observability(), ...]`. One implementation
+reaches every vendor, the way an S3 client reaches every S3-compatible store. (This replaces
+two earlier designs from the same week: scaffolded code, and a separate Sentry driver.)
 
-- **No vendor SDKs, anywhere.** No `@sentry/*`, `dd-trace` or `newrelic`, in `packages/` or in
-  generated projects. A vendor is reached through its OTLP endpoint. (This replaces an
-  earlier design, made the same week, with a separate Sentry driver and vendor presets.)
-- **No OpenTelemetry in any package either.** The `@opentelemetry/*` packages are
-  dependencies of the generated project only. There is no `@sukujs/observability`.
-- **One option, two ways, one result.** `suku new --observability otel` (asked in a terminal,
-  default none) and `suku generate observability` both go through `addObservability` in
-  `packages/cli/src/observability.ts` and must produce the same files.
-- **Vendors are docs guides, not CLI options.** Each guide under
+- **One package.** `@sukujs/observability` exports `observability()`, `telemetry` and
+  `@Traced()`. It follows the unified version rule like every other package.
+- **Core stays neutral.** Nothing about OpenTelemetry goes into `@sukujs/core` or any other
+  package. `ctx.error` was added to core for this, and is a general feature: any middleware
+  can read the error a request ended with.
+- **No vendor SDKs, anywhere.** No `@sentry/*`, `dd-trace` or `newrelic`. A vendor is reached
+  through its OTLP endpoint.
+- **Dependencies.** The OpenTelemetry SDK and exporters are regular dependencies of the
+  package, pinned to the versions its tests run against. `@opentelemetry/api` is the only
+  peer, because an app must have a single copy of it.
+- **Vendors are docs guides, not options.** Each guide under
   `apps/docs/content/docs/observability/` shows which variables to set. Do not add vendor
-  names to the CLI.
-- **Configured with OpenTelemetry's standard variables**: `OTEL_EXPORTER_OTLP_ENDPOINT`,
-  `OTEL_EXPORTER_OTLP_HEADERS`, `OTEL_SERVICE_NAME`, `OTEL_RESOURCE_ATTRIBUTES`,
-  `OTEL_TRACES_SAMPLER_ARG`, `OTEL_LOGS_EXPORTER`, `OTEL_METRICS_EXPORTER`. Do not invent
-  variable names where a standard one exists.
-- **The endpoint is the switch.** Without it the SDK is not started. Do not gate on
-  `process.env.NODE_ENV`: `suku build` inlines it at bundle time.
-- **App code never imports `@opentelemetry/*`.** It uses `telemetry`, `@Traced()` and the
-  `Telemetry` interface from `src/observability`.
-- **Two things stay first:** `import './instrument'` in the entry file, and `Observability`
-  in `middlewares`.
+  names or vendor helpers to the package or the CLI.
+- **Two short variables set the destination:** `OTLP_ENDPOINT` and `OTLP_HEADER`
+  (`name=value,other=value`). OpenTelemetry's longer names for the same two,
+  `OTEL_EXPORTER_OTLP_ENDPOINT` and `OTEL_EXPORTER_OTLP_HEADERS`, are read as a fallback, so a
+  vendor's page can still be followed. Docs and generated files use the short names.
+- **Everything else keeps OpenTelemetry's name:** `OTEL_SERVICE_NAME`,
+  `OTEL_RESOURCE_ATTRIBUTES`, `OTEL_TRACES_SAMPLER_ARG`, `OTEL_LOGS_EXPORTER`,
+  `OTEL_METRICS_EXPORTER`.
+- **The CLI makes the endpoint required.** It adds `OTLP_ENDPOINT: z.url()` and an optional
+  `OTLP_HEADER` to the project's `src/config.ts`, so the app stops at startup without an
+  endpoint. The package by itself does not require it.
+- **The endpoint is the switch.** Without it the SDK is not started and every `telemetry`
+  call is a no-op. Do not gate on `process.env.NODE_ENV`: `suku build` inlines it.
+- **App code never imports `@opentelemetry/*`.**
 - **OTLP goes out as protobuf**, which every vendor accepts. Some reject JSON.
-- **The generator never guesses.** An edit it cannot make safely becomes a note for the user.
-- **Tested against the real SDK.** The CLI suite runs a built Node app and a Bun app against a
-  local OTLP stand-in and checks traces, the `@Traced()` span, logs, the error, metrics, the
-  headers and switching signals off. Check a new SDK major there before raising a version
-  range.
+- **The CLI only wires it.** `suku new --observability otel` and `suku generate observability`
+  add the dependency, the middleware (first) and the logger line, through `addObservability`
+  in `packages/cli/src/observability.ts`. They generate no observability code, and must give
+  the same result. An edit that cannot be made safely becomes a note for the user.
+- **Tested against the real SDK.** The package's suite runs it in process against a local
+  OTLP stand-in. The CLI suite runs a built Node app and a Bun app the same way. Check a new
+  SDK major in both before raising a version range.
 - **Screenshots in vendor guides must not show keys, tokens, DSNs or account names.** Black
   them out before adding the image.

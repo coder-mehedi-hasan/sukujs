@@ -22,8 +22,10 @@ suku generate observability
 bun install
 ```
 
-Nothing is sent yet. The app only starts sending once it has an endpoint, which the next
-steps get you.
+Both add [`@sukujs/observability`](/docs/observability) and put its middleware first in
+`src/main.ts`.
+
+The app now needs an endpoint to start, which the next steps get you.
 
 ## 2. Open the OpenTelemetry setup in Grafana
 
@@ -55,21 +57,22 @@ the token and, below it, the environment variables your app needs.
 
 ## 5. Put the values in `.env`
 
-Click **Copy to clipboard** and paste into a `.env` file in the project. Then:
+Grafana shows the values under its own, longer variable names. Copy two of them into a `.env`
+file in the project, under Suku's names:
 
-- remove the word `export` from each line
-- give `OTEL_SERVICE_NAME` a name; this is what you search for in Grafana
-- keep the quotes
+| Grafana shows                 | Put its value in |
+| ----------------------------- | ---------------- |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | `OTLP_ENDPOINT`  |
+| `OTEL_EXPORTER_OTLP_HEADERS`  | `OTLP_HEADER`    |
 
 ```bash title=".env"
+OTLP_ENDPOINT="https://otlp-gateway-prod-<zone>.grafana.net/otlp"
+OTLP_HEADER="Authorization=Basic <the long value Grafana gave you>"
 OTEL_SERVICE_NAME="my-api"
-OTEL_EXPORTER_OTLP_ENDPOINT="https://otlp-gateway-prod-<zone>.grafana.net/otlp"
-OTEL_EXPORTER_OTLP_HEADERS="Authorization=Basic <the long value Grafana gave you>"
-APP_ENV="development"
 ```
 
-You can leave out `OTEL_EXPORTER_OTLP_PROTOCOL`. The app always sends the format Grafana
-asks for there.
+Keep the quotes. `OTEL_SERVICE_NAME` is the name you search for in Grafana. You can leave out
+`OTEL_EXPORTER_OTLP_PROTOCOL`: the app always sends the format Grafana asks for there.
 
 The project's `.gitignore` already lists `.env`, so the token stays out of git.
 
@@ -89,7 +92,7 @@ curl -H 'x-app-trace: 1' localhost:3000/hello/Ada
 ```
 
 Every log line is sent. Only one request in ten is traced, so the `x-app-trace: 1` header is
-there to make sure this one is. Both settings are in `src/instrument.ts`.
+there to make sure this one is. Both can be [changed](/docs/observability#options).
 
 ## 7. See it in Grafana
 
@@ -115,10 +118,10 @@ lines too.
 The app does not print anything when sending fails, so a wrong value looks the same as no
 data.
 
-- **The endpoint must end in `/otlp`.** Do not add `/v1/logs`; the app adds that itself.
+- **`OTLP_ENDPOINT` must end in `/otlp`.** Do not add `/v1/logs`; the app adds that itself.
 - **The zone must be your stack's.** Copy the endpoint from the page in step 4, not from this
   guide.
-- **The header must be complete.** It starts with `Authorization=Basic ` and ends with `==`
+- **`OTLP_HEADER` must be complete.** It starts with `Authorization=Basic ` and ends with `==`
   or `=`. A line break in the middle breaks it.
 - **The app must have been restarted** after you changed `.env`.
 - **Look at the right time range.** The picker at the top right defaults to the last few
@@ -135,7 +138,7 @@ Your app does not change. Point it at the collector and drop the header, because
 collector holds the token:
 
 ```bash title=".env"
-OTEL_EXPORTER_OTLP_ENDPOINT="http://localhost:4318"
+OTLP_ENDPOINT="http://localhost:4318"
 ```
 
 Grafana's own page for this is

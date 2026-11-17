@@ -31,6 +31,14 @@ export class RequestContext {
   private cookieJar: Cookies | undefined;
   private pendingHeaders: Headers | undefined;
 
+  /**
+   * The error this request ended with, if its handler or a middleware threw one. Set before
+   * the error is turned into a response, so a middleware can read it after `next()`: to log
+   * it, count it or report it. An `HttpException` counts too, including the 404 for an
+   * unmatched route.
+   */
+  error: unknown;
+
   constructor(
     readonly request: Request,
     /** Raw route parameters, decoded. Empty for unmatched requests. */

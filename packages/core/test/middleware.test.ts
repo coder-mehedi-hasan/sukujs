@@ -14,6 +14,7 @@ import {
   type MiddlewareFn,
   middleware,
   type Next,
+  NotFoundException,
   RequestContext,
   Routes,
   route,
@@ -371,5 +372,68 @@ describe('errors from inner middlewares and the client address', () => {
     expect(await (await app.handle(req('/ip'), { remoteAddress: '203.0.113.9' })).json()).toEqual({
       ip: '203.0.113.9',
     });
+  });
+});
+
+describe('ctx.error', () => {
+  const seen: unknown[] = [];
+  const watch: MiddlewareFn = async (ctx, next) => {
+    const res = await next();
+    seen.push(ctx.error);
+    return res;
+  };
+  const boom = new Error('boom');
+  const create = () =>
+    Suku.create({
+      middlewares: [watch],
+      routes: [
+        route.get('/ok', { handle: () => 'fine' }),
+        route.get('/boom', {
+          handle: () => {
+            throw boom;
+          },
+        }),
+        route.get('/denied', {
+          middlewares: [
+            () => {
+              throw new UnauthorizedException('no');
+            },
+          ],
+          handle: () => 'never',
+        }),
+        route.get('/handled', {
+          onError: () => new Response('recovered', { status: 200 }),
+          handle: () => {
+            throw boom;
+          },
+        }),
+      ],
+      services: [singleton(Logger, SilentLogger)],
+    });
+
+  test('is undefined when nothing was thrown', async () => {
+    seen.length = 0;
+    const app = await create();
+    expect((await app.handle(req('/ok'))).status).toBe(200);
+    expect(seen).toEqual([undefined]);
+  });
+
+  test('is the thrown error, for an unexpected error, an HttpException and a 404', async () => {
+    seen.length = 0;
+    const app = await create();
+    expect((await app.handle(req('/boom'))).status).toBe(500);
+    expect((await app.handle(req('/denied'))).status).toBe(401);
+    expect((await app.handle(req('/nope'))).status).toBe(404);
+    expect(seen[0]).toBe(boom);
+    expect(seen[1]).toBeInstanceOf(UnauthorizedException);
+    expect(seen[2]).toBeInstanceOf(NotFoundException);
+  });
+
+  test('is set even when an error handler turned it into a normal response', async () => {
+    seen.length = 0;
+    const app = await create();
+    const res = await app.handle(req('/handled'));
+    expect(await res.text()).toBe('recovered');
+    expect(seen).toEqual([boom]);
   });
 });

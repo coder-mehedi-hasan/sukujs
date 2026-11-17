@@ -21,33 +21,45 @@ suku generate observability
 bun install
 ```
 
-## 2. Find the endpoint and the key in Sentry
+Both add [`@sukujs/observability`](/docs/observability) and put its middleware first in
+`src/main.ts`.
+
+## 2. Find the two values in Sentry
 
 In Sentry, open **Settings**, then **Projects**, and choose your project. In the menu on the
-left, under **SDK Setup**, open **Client Keys (DSN)**. Choose the **OpenTelemetry (OTLP)** tab.
+left, under **SDK Setup**, open **Client Keys (DSN)**. Choose the **OpenTelemetry (OTLP)** tab
+and click **Expand**.
 
-![Sentry's Client Keys page with the OpenTelemetry (OTLP) tab open, showing the OTLP Endpoint field. The DSN and the account's ids are blacked out](/images/observability/sentry-otlp-endpoint.png)
+![Sentry's Client Keys page with the OpenTelemetry (OTLP) tab expanded. Two fields are outlined in red: OTLP Endpoint, and OTLP Logs Endpoint Headers. The DSN, the account's ids and the key are blacked out](/images/observability/sentry-otlp-endpoint.png)
 
-You need two values from this page:
+Sentry lists several fields. You need the two outlined in red:
 
-- **The OTLP Endpoint**, which ends in `/integration/otlp`.
-- **The public key.** It is the first part of the DSN shown above the tabs: the text between
-  `https://` and `@`.
+| Field in Sentry                | Goes in         | Looks like                                              |
+| ------------------------------ | --------------- | ------------------------------------------------------- |
+| **OTLP Endpoint**              | `OTLP_ENDPOINT` | `https://o….ingest.us.sentry.io/api/…/integration/otlp` |
+| **OTLP Logs Endpoint Headers** | `OTLP_HEADER`   | `x-sentry-auth=sentry sentry_key=…`                     |
+
+Each field has a copy button on the right. Ignore the separate Logs Endpoint and Traces
+Endpoint: the app adds `/v1/logs` and `/v1/traces` to the base endpoint itself. The Traces
+Endpoint Headers value is the same as the logs one, so one header covers both.
 
 ## 3. Put the values in `.env`
 
+Paste each value as Sentry gives it, in quotes:
+
 ```bash title=".env"
+OTLP_ENDPOINT="https://o<org-id>.ingest.us.sentry.io/api/<project-id>/integration/otlp"
+OTLP_HEADER="x-sentry-auth=sentry sentry_key=<public key>"
 OTEL_SERVICE_NAME="my-api"
-OTEL_EXPORTER_OTLP_ENDPOINT="https://o<org-id>.ingest.us.sentry.io/api/<project-id>/integration/otlp"
-OTEL_EXPORTER_OTLP_HEADERS="x-sentry-auth=sentry sentry_key=<public key>"
 OTEL_METRICS_EXPORTER=none
 ```
 
-- **Copy the endpoint as it is.** Do not add `/v1/traces`; the app adds that itself.
-- **The header value is the whole phrase** `sentry sentry_key=<public key>`, not the key by
-  itself. A wrong header is the usual reason Sentry answers `401`.
-- **`OTEL_METRICS_EXPORTER=none`** stops the app sending runtime metrics, which Sentry's
-  OpenTelemetry endpoint does not list among what it takes.
+- **`OTLP_ENDPOINT` is the base endpoint**, the one that ends in `/integration/otlp`.
+- **`OTLP_HEADER` is the whole line** `x-sentry-auth=sentry sentry_key=<public key>`, not the
+  key by itself. A wrong header is the usual reason Sentry answers `401`.
+- **`OTEL_SERVICE_NAME`** is the name your app is listed under.
+- **`OTEL_METRICS_EXPORTER=none`** stops the app sending runtime metrics. Sentry's page offers
+  an endpoint for logs and one for traces, and none for metrics.
 
 The project's `.gitignore` already lists `.env`.
 
@@ -92,9 +104,10 @@ that wrote it.
 
 The app does not print anything when sending fails.
 
-- **Check the header** is `x-sentry-auth=sentry sentry_key=<public key>`, with the space and
+- **Check `OTLP_HEADER`** is `x-sentry-auth=sentry sentry_key=<public key>`, with the space and
   both `=` signs.
-- **Check the endpoint** is the one from the OpenTelemetry (OTLP) tab, not the DSN.
+- **Check `OTLP_ENDPOINT`** is the OTLP Endpoint field, not the DSN and not the Logs or Traces
+  endpoint.
 - **Restart the app** after changing `.env`.
 - **Widen the time range** in Sentry, and give it a minute: traces are sent in batches.
 

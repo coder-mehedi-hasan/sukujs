@@ -13,6 +13,5 @@ test('GET /health', async () => {
 });
 
 test('GET /hello/:name', async () => {
-  // Includes simulated DB + HTTP delays from HelloService (~650ms).
   expect(await (await get('/hello/Ada')).json()).toEqual({ message: 'Hello, Ada!' });
-}, 5_000);
+});

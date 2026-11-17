@@ -1,20 +1,17 @@
-import './instrument'; // must stay the first import
-
 import { Logger, singleton, Suku } from '@sukujs/core';
 import { bunAdapter } from '@sukujs/platform-bun';
 import { securityHeaders } from '@sukujs/security';
 import { AppFeature } from './app.feature';
 import { Env } from './config';
 import { PinoLogger, requestLogger } from './logger';
-import { Observability, reportError } from './observability';
+import { observability } from '@sukujs/observability';
 
 const app = await Suku.create({
   features: [Env.load(), AppFeature],
   // Replaces the built-in console logger: every `Logger` in the app now writes through pino.
   services: [singleton(Logger, PinoLogger)],
   // Defensive headers on every response, including 404s and errors.
-  middlewares: [Observability, requestLogger, securityHeaders()],
-  onError: reportError,
+  middlewares: [observability({ forceTraceHeader: 'x-app-trace' }), requestLogger, securityHeaders()],
   adapter: bunAdapter(),
 });
 

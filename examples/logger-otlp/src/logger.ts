@@ -3,7 +3,7 @@ import { isSpanContextValid, trace } from '@opentelemetry/api';
 import pino from 'pino';
 import pretty from 'pino-pretty';
 import { Env } from './config';
-import { telemetry } from './observability';
+import { telemetry } from '@sukujs/observability';
 
 /**
  * The ids of the OpenTelemetry span that is active right now, under the field names

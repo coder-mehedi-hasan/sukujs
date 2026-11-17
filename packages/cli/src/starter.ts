@@ -313,9 +313,7 @@ test('GET /hello/:name', async () => {
     addObservability({
       sourceRoot: 'src',
       entry: 'src/main.ts',
-      importExtension: '',
       read: (path) => all[path],
-      create: (path, content) => void (all[path] = content),
       update: (path, content) => void (all[path] = content),
       // Every edit applies to the starter's own files, so there is nothing to report.
       note: () => undefined,
@@ -323,15 +321,16 @@ test('GET /hello/:name', async () => {
     all['README.md'] += `
 ## Observability
 
-Errors, request traces, logs and runtime metrics are sent with OpenTelemetry once
-\`OTEL_EXPORTER_OTLP_ENDPOINT\` is set. Any OTLP endpoint works: a collector, Grafana Cloud,
-Sentry, Honeycomb and others. Without it nothing is sent, which is how development and tests
-run. \`.env.example\` lists the variables.
+Request traces, logs, errors and runtime metrics are sent with OpenTelemetry to the address
+in \`OTLP_ENDPOINT\`. Any OTLP endpoint works: a collector, Grafana Cloud, Sentry, Honeycomb
+and others. If it needs an API key, put it in \`OTLP_HEADER\` as \`name=value\`.
 
-- \`src/instrument.ts\` holds the settings: the sample rate and the header that forces a trace.
-- \`src/observability/\` is the code. Your own code imports \`telemetry\` and \`Traced\` from it.
+\`OTLP_ENDPOINT\` is required: \`src/config.ts\` stops the app at startup without it. The tests
+do not load the config, so they send nothing.
+
+- \`observability()\` in \`src/main.ts\` is the whole setup. It comes from \`@sukujs/observability\`.
 - \`@Traced()\` on a method records a span for it. \`telemetry.captureException(error)\`
-  reports an error you handled yourself.
+  reports an error you handled yourself. Both come from the same package.
 `;
   }
   return all;

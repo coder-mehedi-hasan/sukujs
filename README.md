@@ -73,6 +73,7 @@ const findOne = route.get('/users/:id', {
 | `@sukujs/crypto`        | JWT, password hashing, signed and encrypted values, random tokens. Works on its own |
 | `@sukujs/security`      | CORS, security headers, CSRF protection and rate limiting, as middlewares           |
 | `@sukujs/graphql`       | Class-based GraphQL resolvers with injection and typed arguments. Optional          |
+| `@sukujs/observability` | Traces, logs, errors and metrics over OpenTelemetry, to any OTLP endpoint. Optional |
 | `@sukujs/platform-node` | `node:http` adapter                                                                 |
 | `@sukujs/platform-bun`  | `Bun.serve` adapter                                                                 |
 

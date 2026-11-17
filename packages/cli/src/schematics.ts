@@ -24,7 +24,7 @@ export const SCHEMATICS = {
   resource: { alias: 'res', description: 'A CRUD feature: routes, service, schemas and a test' },
   observability: {
     alias: 'obs',
-    description: 'Errors, traces, logs and metrics sent with OpenTelemetry',
+    description: 'Add @sukujs/observability: traces, logs and errors over OpenTelemetry',
   },
 } as const;
 
@@ -351,12 +351,11 @@ export function generate(
       addObservability({
         ...project,
         read: (path) => plan.read(path),
-        create: (path, content) => plan.create(path, content),
         update: (path, content) => plan.update(path, content),
         note: (message) => plan.note(message),
       });
       plan.note(
-        'Install the new dependencies, then set OTEL_EXPORTER_OTLP_ENDPOINT where the app runs. Nothing is sent without it.',
+        'Install the new dependency, then set OTLP_ENDPOINT where the app runs. The app does not start without it.',
       );
       return;
     }

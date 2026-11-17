@@ -12,8 +12,8 @@ const budgets: Record<string, number> = {
   'packages/crypto/src/index.ts': 12 * 1024,
   'packages/security/src/index.ts': 8 * 1024,
   'packages/graphql/src/index.ts': 6 * 1024,
-  // Mostly templates: the starter, the generators and the observability folder.
-  'packages/cli/src/index.ts': 64 * 1024,
+  'packages/observability/src/index.ts': 8 * 1024,
+  'packages/cli/src/index.ts': 48 * 1024,
 };
 
 let failed = false;
@@ -23,7 +23,7 @@ for (const [entry, limit] of Object.entries(budgets)) {
     minify: true,
     target: 'node',
     write: false,
-    external: ['@sukujs/*', 'graphql', 'graphql-yoga'],
+    external: ['@sukujs/*', '@opentelemetry/*', 'graphql', 'graphql-yoga'],
   });
   if (!result.success) {
     console.error(result.logs);

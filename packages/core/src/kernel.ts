@@ -314,6 +314,7 @@ export function createKernel(
     ctx: RequestContext,
     c: Compiled | undefined,
   ): Promise<Response> {
+    ctx.error = error;
     const handlers = options.onError
       ? [...(c?.errorHandlers ?? []), options.onError]
       : (c?.errorHandlers ?? []);

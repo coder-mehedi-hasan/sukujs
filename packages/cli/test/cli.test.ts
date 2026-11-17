@@ -67,6 +67,8 @@ describe('register', () => {
       'x({\n  routes: [\n    A,\n    B,\n  ],\n})',
     );
     expect(addToArray('x({})', 'routes', 'A')).toBeUndefined();
+    // A longer name that starts the same is a different entry.
+    expect(addToArray('x({ routes: [AB] })', 'routes', 'A')).toBe('x({ routes: [AB, A] })');
   });
 
   test('puts an item first in a one-line and a multi-line array, once', () => {
@@ -77,6 +79,13 @@ describe('register', () => {
       'x({\n  list: [\n    A,\n    B,\n  ],\n})',
     );
     expect(prependToArray('x({})', 'list', 'A')).toBeUndefined();
+    // An entry may be a call, with characters that mean something in a pattern.
+    expect(prependToArray('x({ list: [B] })', 'list', "a({ b: 'c' })")).toBe(
+      "x({ list: [a({ b: 'c' }), B] })",
+    );
+    expect(prependToArray("x({ list: [a({ b: 'c' }), B] })", 'list', "a({ b: 'c' })")).toBe(
+      "x({ list: [a({ b: 'c' }), B] })",
+    );
   });
 
   test('adds a missing array to a feature', () => {
@@ -184,7 +193,7 @@ describe('prompts', () => {
     expect(output).toContain('CREATE Dockerfile');
     expect(output).toContain('CREATE api/index.ts');
     expect(output).not.toContain('wrangler.jsonc');
-    expect(output).toContain('CREATE src/observability/telemetry.ts');
+    expect(output).toContain('CREATE src/logger.ts');
     expect(existsSync(join(tmp, 'asked'))).toBe(false);
   });
 });
@@ -438,7 +447,7 @@ const instrumented = async (name: string, ...flags: string[]) => {
     service
       .replace(
         "from '@sukujs/core';",
-        "from '@sukujs/core';\nimport { Traced } from '../observability';",
+        "from '@sukujs/core';\nimport { Traced } from '@sukujs/observability';",
       )
       .replace('  greet(', '  @Traced()\n  greet('),
   );
@@ -491,7 +500,7 @@ describe('observability', () => {
   /** What any OTLP endpoint must receive from the requests and the failure. */
   const expectTelemetry = (received: string) => {
     const text = stripped(received);
-    // Headers from OTEL_EXPORTER_OTLP_HEADERS: `%20` is a space, and a value may hold `=`.
+    // Headers from OTLP_HEADER: `%20` is a space, and a value may hold `=`.
     expect(text).toContain('/v1/traces key=Bearer secret auth=sentry sentry_key=abc123');
     expect(text).toContain('/v1/logs key=Bearer secret');
     expect(text).toContain('service.name observed-app');
@@ -511,9 +520,10 @@ describe('observability', () => {
   };
 
   const otlp = (endpoint: string) => ({
-    OTEL_EXPORTER_OTLP_ENDPOINT: endpoint,
-    OTEL_EXPORTER_OTLP_HEADERS: 'x-key=Bearer%20secret,x-auth=sentry sentry_key=abc123',
+    OTLP_ENDPOINT: endpoint,
+    OTLP_HEADER: 'x-key=Bearer%20secret,x-auth=sentry sentry_key=abc123',
     OTEL_RESOURCE_ATTRIBUTES: 'deployment.environment.name=staging',
+    OTEL_SERVICE_NAME: 'observed-app',
   });
 
   test('suku new with the flag and the generator afterwards give the same project', async () => {
@@ -522,44 +532,48 @@ describe('observability', () => {
     // One kind, so the generator needs no name.
     const generated = await cli(later, 'g', 'observability');
     expect(generated.code).toBe(0);
-    expect(generated.output).toContain('CREATE src/observability/telemetry.ts');
+    expect(generated.output).toContain('UPDATE package.json');
     expect(generated.output).toContain('UPDATE src/main.ts');
-    expect(generated.output).toContain('NOTE   Install the new dependencies');
-    for (const file of [
-      'src/main.ts',
-      'src/logger.ts',
-      'src/instrument.ts',
-      'src/observability/index.ts',
-      'src/observability/init.ts',
-      'src/observability/telemetry.ts',
-    ]) {
-      expect(read(later, file).replaceAll('later', 'flagged')).toBe(read(flagged, file));
+    expect(generated.output).toContain('UPDATE src/logger.ts');
+    expect(generated.output).toContain('UPDATE src/config.ts');
+    expect(generated.output).toContain('NOTE   Install the new dependency');
+    // It wires a package. It generates no code of its own.
+    expect(generated.output).not.toContain('CREATE');
+    for (const file of ['src/main.ts', 'src/logger.ts', 'src/config.ts']) {
+      expect(read(later, file)).toBe(read(flagged, file));
     }
-    const dependencies = Object.keys(JSON.parse(read(later, 'package.json')).dependencies);
-    expect(dependencies).toContain('@opentelemetry/exporter-trace-otlp-proto');
-    expect(dependencies.join()).not.toContain('sentry');
+    const { dependencies } = JSON.parse(read(later, 'package.json'));
+    // The same version as the rest of Suku.
+    expect(dependencies['@sukujs/observability']).toBe(dependencies['@sukujs/core']);
+    expect(dependencies['@opentelemetry/api']).toBeDefined();
+    expect(Object.keys(dependencies).join()).not.toContain('sdk-trace');
 
     const main = read(flagged, 'src/main.ts');
-    expect(main.startsWith("import './instrument';")).toBe(true);
+    expect(main).toContain("import { observability } from '@sukujs/observability';");
     // First, so the request logger and everything after it run inside the trace.
-    expect(main).toContain('middlewares: [Observability, requestLogger, securityHeaders()],');
-    expect(main).toContain('onError: reportError,');
-    expect(read(flagged, 'README.md')).toContain('## Observability');
-    expect(read(flagged, '.env.example')).toContain(
-      '# OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318',
+    expect(main).toContain(
+      "middlewares: [observability({ forceTraceHeader: 'x-app-trace' }), requestLogger, securityHeaders()],",
     );
+    expect(main).not.toContain('instrument');
+    expect(read(flagged, 'src/logger.ts')).toContain(
+      "import { telemetry } from '@sukujs/observability';",
+    );
+    expect(existsSync(join(flagged, 'src/observability'))).toBe(false);
+    expect(read(flagged, 'README.md')).toContain('## Observability');
+    // The endpoint is a required config value; the header is optional.
+    expect(read(flagged, 'src/config.ts')).toContain('OTLP_ENDPOINT: z.url(),');
+    expect(read(flagged, 'src/config.ts')).toContain('OTLP_HEADER: z.string().optional(),');
+    expect(read(flagged, '.env.example')).toContain('OTLP_ENDPOINT=http://localhost:4318');
+    expect(read(flagged, '.env.example')).toContain('# OTLP_HEADER=name=value');
     expect(read(flagged, '.env.example')).toContain('OTEL_SERVICE_NAME=flagged');
     // A project without it has no trace of it.
-    expect(read(await project('plain'), 'package.json')).not.toContain('sdk-trace');
+    expect(read(await project('plain'), 'package.json')).not.toContain('observability');
 
-    // Only two files import the OpenTelemetry SDK. App code uses the Telemetry interface.
-    const sdk = sh(flagged, 'grep', '-rlE', '@opentelemetry/(sdk|exporter)', 'src');
-    expect(sdk.output.trim()).toBe('src/observability/init.ts');
-    expect(read(flagged, 'src/observability/index.ts')).not.toContain('@opentelemetry');
-
-    const again = await cli(later, 'g', 'obs', 'otel');
-    expect(again.code).toBe(1);
-    expect(again.output).toContain('Refusing to overwrite');
+    // Running it again changes nothing.
+    const before = read(later, 'src/main.ts');
+    expect((await cli(later, 'g', 'obs', 'otel')).code).toBe(0);
+    expect(read(later, 'src/main.ts')).toBe(before);
+    expect(read(later, 'src/logger.ts').match(/telemetry\.log\(level/g)).toHaveLength(1);
     // Vendors are not options: any of them is reached by setting the endpoint.
     for (const vendor of ['sentry', 'grafana']) {
       expect((await cli(tmp, 'new', 'x', '--observability', vendor, '--yes')).output).toContain(
@@ -572,17 +586,24 @@ describe('observability', () => {
     const root = await project('custom');
     writeFileSync(
       join(root, 'src/main.ts'),
-      read(root, 'src/main.ts').replace('  adapter:', '  onError: () => undefined,\n  adapter:'),
+      read(root, 'src/main.ts').replace(/\n {2}middlewares: \[.*\],/, ''),
     );
     writeFileSync(join(root, 'src/logger.ts'), '// replaced by the team\n');
-    const result = await cli(root, 'g', 'observability', 'opentelemetry');
+    const result = await cli(root, 'g', 'observability');
     expect(result.code).toBe(0);
-    expect(result.output).toContain('already has an `onError`. Call `reportError(error, ctx)`');
+    expect(result.output).toContain(
+      "Add `observability({ forceTraceHeader: 'x-app-trace' })` as the first of the `middlewares`",
+    );
     expect(result.output).toContain('call `telemetry.log(level, message, meta)` from your Logger');
-    const main = read(root, 'src/main.ts');
-    expect(main).toContain('middlewares: [Observability, ');
-    expect(main).not.toContain('onError: reportError');
+    expect(read(root, 'src/main.ts')).not.toContain('observability');
     expect(read(root, 'src/logger.ts')).toBe('// replaced by the team\n');
+
+    // The same for a config it does not recognise.
+    const other = await project('custom-config');
+    writeFileSync(join(other, 'src/config.ts'), 'export const Env = load();\n');
+    const noted = await cli(other, 'g', 'observability');
+    expect(noted.output).toContain('Add `OTLP_ENDPOINT: z.url()` to your config schema');
+    expect(read(other, 'src/config.ts')).toBe('export const Env = load();\n');
   });
 
   test('a built Node app sends traces, logs, errors and metrics over OTLP', async () => {
@@ -608,16 +629,14 @@ describe('observability', () => {
       backend.stop();
     }
 
-    // Without an endpoint the SDK never starts: nothing is sent and nothing is printed.
-    const idle = collector();
-    try {
-      const { stderr, stdout } = await exercise(root, ['node', 'dist/main.js'], {});
-      expect(stderr).toBe('');
-      expect(idle.received()).toBe('');
-      expect(stdout).not.toContain('trace_id');
-    } finally {
-      idle.stop();
-    }
+    // The endpoint is required: without it the app stops before it listens.
+    const refused = Bun.spawnSync(['node', 'dist/main.js'], {
+      cwd: root,
+      env: { ...process.env, PORT: '0', OTLP_ENDPOINT: undefined },
+    });
+    expect(refused.exitCode).not.toBe(0);
+    expect(refused.stderr.toString()).toContain('Invalid configuration "env"');
+    expect(refused.stderr.toString()).toContain('OTLP_ENDPOINT');
   }, 120_000);
 
   test('a Bun app sends the same, and signals can be switched off', async () => {

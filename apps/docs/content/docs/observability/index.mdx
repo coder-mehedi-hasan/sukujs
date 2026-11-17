@@ -1,65 +1,116 @@
 ---
 title: Observability
-description: Errors, request traces, logs and runtime metrics sent with OpenTelemetry to any vendor that accepts it.
+description: Request traces, logs, errors and runtime metrics sent with OpenTelemetry to any vendor that accepts it, as one middleware.
 icon: Activity
 ---
 
 Observability means being able to see what your app is doing in production: which errors
 happen, which requests are slow and why, and what the logs said at the time.
 
-Suku does this with [OpenTelemetry](https://opentelemetry.io), the open standard for sending
-that data. It works like an S3 client: one piece of code, and any service that speaks the
-protocol accepts it. You choose where the data goes by setting an address, not by installing
-that vendor's SDK.
-
-Suku does not ship this as a package. The CLI writes it into your project as ordinary code
-you own, the same way it does for [logging](/docs/logging#pino-and-opentelemetry).
+`@sukujs/observability` does this with [OpenTelemetry](https://opentelemetry.io), the open
+standard for sending that data. It works like an S3 client: one piece of code, and any
+service that speaks the protocol accepts it. You choose where the data goes by setting an
+address, not by installing that vendor's SDK.
 
 ## Add it
 
-To a new project:
+The CLI installs and wires it. For a new project:
 
 ```bash
 suku new my-api --observability otel
 ```
 
-In a terminal, `suku new` also asks. The default is none.
-
-To a project you already have:
+In a terminal, `suku new` also asks. The default is none. For a project you already have:
 
 ```bash
 suku generate observability
 bun install
 ```
 
-Both give the same result.
+Or by hand. Install the package, and put the middleware first:
+
+```bash
+bun add @sukujs/observability @opentelemetry/api
+```
+
+```ts title="src/main.ts"
+import { Logger, singleton, Suku } from '@sukujs/core';
+import { nodeAdapter } from '@sukujs/platform-node';
+import { securityHeaders } from '@sukujs/security';
+import { AppFeature } from './app.feature';
+import { Env } from './config';
+import { PinoLogger, requestLogger } from './logger';
+import { observability } from '@sukujs/observability';
+
+const app = await Suku.create({
+  features: [Env.load(), AppFeature],
+  // Replaces the built-in console logger: every `Logger` in the app now writes through pino.
+  services: [singleton(Logger, PinoLogger)],
+  // Defensive headers on every response, including 404s and errors.
+  middlewares: [
+    observability({ forceTraceHeader: 'x-app-trace' }),
+    requestLogger,
+    securityHeaders(),
+  ],
+  adapter: nodeAdapter(),
+});
+```
+
+That one line is the whole wiring. `observability()` must stay **first** in `middlewares`, so
+everything else, including the request log, happens inside the trace.
 
 ## Choose where it goes
 
-Set the endpoint where the app runs. **Without it nothing is sent and OpenTelemetry is never
-started**, which is how development and tests run.
+Two variables decide where the data goes.
 
 ```bash title=".env.example"
-# Observability is off until OTEL_EXPORTER_OTLP_ENDPOINT is set. Any OTLP endpoint works:
-# a collector on this machine, or a vendor. The API key, if any, goes in the headers.
-# OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318
-# OTEL_EXPORTER_OTLP_HEADERS=name=value,other=value
-# OTEL_RESOURCE_ATTRIBUTES=deployment.environment.name=production
+# Where traces, logs and errors are sent: any OTLP endpoint, a collector or a vendor.
+OTLP_ENDPOINT=http://localhost:4318
+# The API key for that endpoint, as name=value. Leave it out if the endpoint needs none.
+# OTLP_HEADER=name=value
 OTEL_SERVICE_NAME=my-api
 ```
 
-| Variable                      | What it is                                                               |
-| ----------------------------- | ------------------------------------------------------------------------ |
-| `OTEL_EXPORTER_OTLP_ENDPOINT` | The address to send to: a collector, or a vendor. This is the on switch. |
-| `OTEL_EXPORTER_OTLP_HEADERS`  | The API key, as `name=value` pairs separated by commas.                  |
-| `OTEL_SERVICE_NAME`           | The name your app is listed under.                                       |
-| `OTEL_RESOURCE_ATTRIBUTES`    | Extra labels on everything sent, such as the environment.                |
-| `OTEL_TRACES_SAMPLER_ARG`     | The share of requests traced, from `0` to `1`. Default `0.1`.            |
-| `OTEL_LOGS_EXPORTER=none`     | Do not send logs, for a vendor that takes none.                          |
-| `OTEL_METRICS_EXPORTER=none`  | Do not send metrics, for a vendor that takes none.                       |
+| Variable        | What it is                                                               |
+| --------------- | ------------------------------------------------------------------------ |
+| `OTLP_ENDPOINT` | The address to send to: a collector, or a vendor. This is the on switch. |
+| `OTLP_HEADER`   | The API key, as `name=value`. Several are separated by commas.           |
 
-These are OpenTelemetry's own variable names, so a vendor's setup page can usually be followed
-as written.
+In a value, write a space as `%20`, or put the whole value in quotes.
+
+**In a project set up by the CLI, `OTLP_ENDPOINT` is required.** The CLI adds it to
+`src/config.ts`, so the app stops at startup when it is missing, the same as any other
+[configuration](/docs/configuration) value:
+
+```ts title="src/config.ts"
+// Where traces, logs and errors are sent. Any OTLP endpoint: a collector or a vendor.
+OTLP_ENDPOINT: z.url(),
+// The API key for that endpoint, as name=value. Not every endpoint needs one.
+OTLP_HEADER: z.string().optional(),
+```
+
+`OTLP_HEADER` stays optional, because a collector on your own machine, Jaeger and the Datadog
+Agent need no key. Change `.optional()` to make it required too. Your tests are not affected:
+they create the app without loading the config, so they send nothing.
+
+Used by hand, without those config lines, the package simply stays off until there is an
+endpoint: nothing is sent and OpenTelemetry is never started.
+
+A few more things can be set the same way. These keep OpenTelemetry's own names:
+
+| Variable                     | What it is                                                                         |
+| ---------------------------- | ---------------------------------------------------------------------------------- |
+| `OTEL_SERVICE_NAME`          | The name your app is listed under.                                                 |
+| `OTEL_RESOURCE_ATTRIBUTES`   | Extra labels on everything sent, such as `deployment.environment.name=production`. |
+| `OTEL_TRACES_SAMPLER_ARG`    | The share of requests traced, from `0` to `1`. Default `0.1`.                      |
+| `OTEL_LOGS_EXPORTER=none`    | Do not send logs, for a vendor that takes none.                                    |
+| `OTEL_METRICS_EXPORTER=none` | Do not send metrics, for a vendor that takes none.                                 |
+
+<Callout title="Following a vendor's setup page">
+  Vendor pages use OpenTelemetry's longer names. Put the value they give for
+  `OTEL_EXPORTER_OTLP_ENDPOINT` in `OTLP_ENDPOINT`, and the one for `OTEL_EXPORTER_OTLP_HEADERS` in
+  `OTLP_HEADER`. The long names are read too, if you would rather paste them as they are.
+</Callout>
 
 ### Vendor guides
 
@@ -81,13 +132,13 @@ OpenTelemetry page.
 
 ## What gets sent
 
-| Signal  | What you see                                                   | Where it comes from            |
-| ------- | -------------------------------------------------------------- | ------------------------------ |
-| Errors  | Every error nobody handled, with its stack and the route       | `onError: reportError`         |
-| Traces  | One trace per request, named after the route: `GET /users/:id` | The `Observability` middleware |
-| Spans   | The time spent in a method you marked                          | `@Traced()`                    |
-| Logs    | Every line your `Logger` writes                                | One line in `src/logger.ts`    |
-| Runtime | Memory, CPU time, uptime and event-loop delay                  | `src/observability/init.ts`    |
+| Signal  | What you see                                                   | Where it comes from                                                       |
+| ------- | -------------------------------------------------------------- | ------------------------------------------------------------------------- |
+| Traces  | One trace per request, named after the route: `GET /users/:id` | The middleware                                                            |
+| Errors  | Every error nobody handled, with its stack and the route       | The middleware, through [`ctx.error`](/docs/middlewares#seeing-the-error) |
+| Spans   | The time spent in a method you marked                          | `@Traced()`                                                               |
+| Logs    | Every line your `Logger` writes                                | One line in your logger, below                                            |
+| Runtime | Memory, CPU time, uptime and event-loop delay                  | The middleware                                                            |
 
 A `404`, a `400` or any other [`HttpException`](/docs/errors) is an answer your app chose to
 give, so it is not reported as an error.
@@ -95,135 +146,60 @@ give, so it is not reported as an error.
 When a request arrives as part of a trace another service started (a `traceparent` header),
 the trace continues: your spans join the caller's.
 
-The JSON logs on stdout carry the same `trace_id` and `span_id` the vendor shows, so a line
-in your terminal or log file can be matched to its trace.
+## Options
 
-## What the CLI adds
+Every option falls back to a variable above, so most apps pass none. Pass one to fix a
+value in code.
 
-```text
-src/
-  instrument.ts                    # the settings; main.ts imports it first
-  observability/
-    index.ts                       # what your code imports
-    init.ts                        # starts OpenTelemetry
-    telemetry.ts                   # `telemetry`: logs, errors, spans
-    observability.types.ts         # ObservabilityOptions, Telemetry
-    observability.middleware.ts    # Observability, reportError
-    traced.decorator.ts            # @Traced()
-```
-
-The `@opentelemetry/*` packages go into your `package.json`.
-
-It also edits three existing files. In `src/main.ts`, the import, the middleware and the
-error handler:
-
-```ts title="src/main.ts"
-import './instrument'; // must stay the first import
-
-import { Logger, singleton, Suku } from '@sukujs/core';
-import { nodeAdapter } from '@sukujs/platform-node';
-import { securityHeaders } from '@sukujs/security';
-import { AppFeature } from './app.feature';
-import { Env } from './config';
-import { PinoLogger, requestLogger } from './logger';
-import { Observability, reportError } from './observability';
-
-const app = await Suku.create({
-  features: [Env.load(), AppFeature],
-  // Replaces the built-in console logger: every `Logger` in the app now writes through pino.
-  services: [singleton(Logger, PinoLogger)],
-  // Defensive headers on every response, including 404s and errors.
-  middlewares: [Observability, requestLogger, securityHeaders()],
-  onError: reportError,
-  adapter: nodeAdapter(),
-});
-```
-
-In `src/logger.ts`, one line that sends each log line on:
-
-```ts title="src/logger.ts"
-log(level: LogLevel, message: string, meta?: Record<string, unknown>): void {
-  this.pino[level](meta ?? {}, message);
-  telemetry.log(level, message, meta);
-}
-```
-
-And the variables in `.env.example`.
-
-<Callout type="warn" title="Two things that must stay first">
-  `import './instrument'` must stay the first line of `src/main.ts`, so OpenTelemetry is running
-  before the server starts. `Observability` must stay the first middleware, so everything else,
-  including the request log, happens inside the trace.
-</Callout>
-
-If the generator cannot make one of these edits safely, for example because your `main.ts`
-already has an `onError`, it changes nothing there and prints a note that says what to add.
-
-## Settings
-
-The variables above cover most needs. The rest is in one file.
-
-```ts title="src/instrument.ts"
-// Starts tracing, log shipping and metrics. `main.ts` imports this file first, before anything
-// else loads, and it must stay that way.
-import { initObservability } from './observability/init';
-
-// Everything is set with OpenTelemetry's standard variables, so any OTLP endpoint works: a
-// collector, or a vendor. An API key goes in OTEL_EXPORTER_OTLP_HEADERS, which the exporters
-// read themselves.
-const endpoint = process.env.OTEL_EXPORTER_OTLP_ENDPOINT;
-
-initObservability({
-  endpoint,
-  // On only when an endpoint is set, so development and tests send nothing.
-  enabled: Boolean(endpoint),
-  serviceName: process.env.OTEL_SERVICE_NAME ?? 'my-api',
-  // One request in ten is traced, unless OTEL_TRACES_SAMPLER_ARG says otherwise. Errors and
-  // logs are always sent.
-  traceSampleRate: Number(process.env.OTEL_TRACES_SAMPLER_ARG ?? 0.1),
-  // A request with this header set to "1" is always traced, which helps when debugging.
+```ts
+observability({
+  serviceName: 'my-api',
+  traceSampleRate: 0.25,
   forceTraceHeader: 'x-app-trace',
-  // Some vendors take no logs or no metrics. Set the variable to "none" for those.
-  logs: process.env.OTEL_LOGS_EXPORTER !== 'none',
-  runtimeMetrics: process.env.OTEL_METRICS_EXPORTER !== 'none',
+  ignoreTraces: [/^GET \/health$/],
+  ignoreError: (error) => error instanceof ValidationError,
 });
 ```
 
-| Option             | What it does                                                                             |
-| ------------------ | ---------------------------------------------------------------------------------------- |
-| `endpoint`         | Where the data goes.                                                                     |
-| `enabled`          | Off means OpenTelemetry is not started at all.                                           |
-| `serviceName`      | The name your app is listed under.                                                       |
-| `traceSampleRate`  | The share of requests that are traced, from `0` to `1`. Errors and logs are always sent. |
-| `forceTraceHeader` | A request with this header set to `1` is always traced.                                  |
-| `ignoreTraces`     | Names of traces that are never sent, as regular expressions.                             |
-| `ignoreError`      | Return `true` for an error that should not be reported.                                  |
-| `logs`             | `false` stops sending log lines.                                                         |
-| `runtimeMetrics`   | `false` stops sending memory and CPU figures.                                            |
+| Option             | What it does                                                                    | Default                                 |
+| ------------------ | ------------------------------------------------------------------------------- | --------------------------------------- |
+| `endpoint`         | Where the data goes.                                                            | `OTLP_ENDPOINT`                         |
+| `headers`          | Headers for every export, as an object. Added to the ones from `OTLP_HEADER`.   | none                                    |
+| `enabled`          | `false` keeps it off even when there is an endpoint.                            | on with an endpoint                     |
+| `serviceName`      | The name your app is listed under.                                              | `OTEL_SERVICE_NAME`, then `app`         |
+| `traceSampleRate`  | The share of requests traced, from `0` to `1`. Errors and logs are always sent. | `OTEL_TRACES_SAMPLER_ARG`, then `0.1`   |
+| `forceTraceHeader` | A request with this header set to `1` is always traced.                         | off                                     |
+| `ignoreTraces`     | Names of traces that are never sent, as regular expressions.                    | none                                    |
+| `ignoreError`      | Return `true` for an error that should not be reported.                         | none                                    |
+| `logs`             | `false` stops sending log lines.                                                | on, unless `OTEL_LOGS_EXPORTER=none`    |
+| `metrics`          | `false` stops sending memory and CPU figures.                                   | on, unless `OTEL_METRICS_EXPORTER=none` |
 
 Tracing every request costs quota, so only one in ten is traced by default. When you are
-chasing one slow request, send the header and that request is traced for certain:
+chasing one slow request, send the force header and that request is traced for certain. The
+CLI sets it to `x-app-trace`:
 
 ```bash
 curl -H 'x-app-trace: 1' https://api.example.com/users/42
 ```
 
-<Callout type="warn" title="Do not use NODE_ENV here">
-  `suku build` replaces `process.env.NODE_ENV` with a fixed value while it bundles, so a check such
-  as `enabled: process.env.NODE_ENV === 'production'` is decided at build time, not when the app
-  starts. That is why the switch is the endpoint.
+<Callout type="warn" title="Anyone can send the force header">
+  It is a debugging aid, not a secret. A client that sends it on every request makes every request
+  traced. Leave `forceTraceHeader` out, or strip the header at your proxy, if that matters to you.
 </Callout>
+
+OpenTelemetry is started once per process, by the first `observability()` call that has an
+endpoint. Later calls do not change it.
 
 ## Use it in your code
 
-Import from `./observability`, never from `@opentelemetry/*`.
+Import from `@sukujs/observability`, never from `@opentelemetry/*`.
 
 **Time a method.** `@Traced()` records a span named `Class.method` inside the trace of the
 request that called it.
 
 ```ts
 import { Service } from '@sukujs/core';
-import { Traced } from '../observability';
+import { Traced } from '@sukujs/observability';
 
 @Service()
 export class ReportsService {
@@ -238,7 +214,7 @@ export class ReportsService {
 not, unless you say so.
 
 ```ts
-import { telemetry } from '../observability';
+import { telemetry } from '@sukujs/observability';
 
 try {
   await payments.charge(order);
@@ -256,17 +232,35 @@ const rows = await telemetry.startSpan({ name: 'load report rows', op: 'db' }, (
 );
 ```
 
-**Log** the usual way. Ask for [`Logger`](/docs/logging) and write to it; the lines are sent
-on as well.
+All of these are safe to call while observability is off: they do nothing, and `startSpan`
+simply runs your function.
 
 <Callout type="warn" title="Never send secrets or personal data">
   Log and report ids and outcomes: `orderId`, `status`, `durationMs`. Never tokens, passwords,
   one-time codes, emails, phone numbers or payment details.
 </Callout>
 
+## Logs
+
+Logs are sent when your [`Logger`](/docs/logging) passes its lines on. In the pino logger
+that `suku new` creates, that is one line, which the CLI adds for you:
+
+```ts title="src/logger.ts"
+import { telemetry } from '@sukujs/observability';
+
+log(level: LogLevel, message: string, meta?: Record<string, unknown>): void {
+  this.pino[level](meta ?? {}, message);
+  telemetry.log(level, message, meta);
+}
+```
+
+Each line sent is linked to the trace of the request that wrote it. The JSON lines on stdout
+carry the same `trace_id` and `span_id`, so a line in your terminal or log file can be
+matched to its trace too.
+
 ## Shutting down
 
-`Observability` is created by the container, so it is [disposed](/docs/dependency-injection#disposal)
+The middleware is created by the container, so it is [disposed](/docs/dependency-injection#disposal)
 when the app closes. That is when it sends whatever is still waiting. The starter's
 `src/main.ts` already calls `app.close()` on `SIGTERM`, so nothing is lost on a deploy.
 
@@ -281,7 +275,7 @@ when the app closes. That is when it sends whatever is still waiting. The starte
   the line your `Logger` writes for it.
 - **Nothing is printed when sending fails.** A wrong endpoint or key looks the same as no
   data.
-- **The Cloudflare Workers and Vercel entry points are not wired.** `suku new` sets this up
-  in `src/main.ts` only.
+- **The Cloudflare Workers and Vercel entry points are not wired** by `suku new`, and the
+  package has not been tried on those runtimes.
 - **Vendor agents are not supported**, such as Sentry's SDK, `dd-trace` or the New Relic
   agent. Use the vendor's OpenTelemetry endpoint.

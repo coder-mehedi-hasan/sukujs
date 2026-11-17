@@ -1,5 +1,11 @@
 /** Small, text-based edits that wire a generated file into an existing one. */
 
+/** Whether `item` is already an entry of the array text `body`, as a whole word. */
+function listed(body: string, item: string): boolean {
+  const escaped = item.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return new RegExp(`(^|[^\\w$])${escaped}($|[^\\w$])`).test(body);
+}
+
 /** Adds `import { name } from 'from';` after the last import, unless it is already imported. */
 export function addImport(source: string, name: string, from: string): string {
   const already = new RegExp(`import\\s*\\{[^}]*\\b${name}\\b[^}]*\\}\\s*from`).test(source);
@@ -20,7 +26,7 @@ export function addToArray(source: string, key: string, item: string): string | 
   const match = new RegExp(`(\\b${key}\\s*:\\s*\\[)([^\\]]*)(\\])`).exec(source);
   if (!match) return undefined;
   const [whole, open = '', body = '', close = ''] = match;
-  if (new RegExp(`\\b${item}\\b`).test(body)) return source;
+  if (listed(body, item)) return source;
   let next: string;
   if (body.trim() === '') {
     next = `${open}${item}${close}`;
@@ -41,7 +47,7 @@ export function prependToArray(source: string, key: string, item: string): strin
   const match = new RegExp(`(\\b${key}\\s*:\\s*\\[)([^\\]]*)(\\])`).exec(source);
   if (!match) return undefined;
   const [whole, open = '', body = '', close = ''] = match;
-  if (new RegExp(`\\b${item}\\b`).test(body)) return source;
+  if (listed(body, item)) return source;
   let next: string;
   if (body.trim() === '') {
     next = `${open}${item}${close}`;

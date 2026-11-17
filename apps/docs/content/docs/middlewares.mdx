@@ -20,12 +20,12 @@ export const timing = middleware(async (ctx, next) => {
 
 That one shape covers what other frameworks split into middleware, guards and interceptors.
 
-| Need | How |
-| --- | --- |
-| Run something before the handler | Do it, then `return next()`. |
-| Reject the request | Throw an `HttpException`, or return a `Response` without calling `next()`. |
-| Change the response | `const res = await next()`, then modify or replace it. |
-| Share data with the handler | `ctx.set('user', user)`, read with `ctx.get('user')`. |
+| Need                             | How                                                                        |
+| -------------------------------- | -------------------------------------------------------------------------- |
+| Run something before the handler | Do it, then `return next()`.                                               |
+| Reject the request               | Throw an `HttpException`, or return a `Response` without calling `next()`. |
+| Change the response              | `const res = await next()`, then modify or replace it.                     |
+| Share data with the handler      | `ctx.set('user', user)`, read with `ctx.get('user')`.                      |
 
 ## Where they attach
 
@@ -109,3 +109,21 @@ which case it is created per request and may inject the `RequestContext`.
 - Return without calling `next()` to short-circuit.
 - Calling `next()` twice is an error.
 - An error thrown by a middleware goes to the [error handlers](/docs/errors).
+
+## Seeing the error
+
+`next()` always gives you a response, even when the handler threw: the error has already been
+turned into one. To know what went wrong, read `ctx.error` after `next()`.
+
+```ts
+export const logFailures = middleware(async (ctx, next) => {
+  const res = await next();
+  if (ctx.error && !(ctx.error instanceof HttpException)) {
+    console.error(`${ctx.method} ${ctx.url.pathname} failed`, ctx.error);
+  }
+  return res;
+});
+```
+
+`ctx.error` is whatever was thrown: an `HttpException` such as a 404 or a 401, or an
+unexpected error that became a 500. It is `undefined` when nothing was thrown.
